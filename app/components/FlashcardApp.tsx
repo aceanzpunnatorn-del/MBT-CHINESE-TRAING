@@ -347,11 +347,9 @@ export default function FlashcardApp() {
     const url = URL.createObjectURL(blob);
 
     const audio = new Audio(url);
-    audio.playsInline = true;
-    audio.preload = 'auto';
+audio.preload = 'auto';
 
-    await audio.play();
-
+await audio.play();
     audio.onended = () => {
       URL.revokeObjectURL(url);
       setTtsState({ key: null, loading: false });
