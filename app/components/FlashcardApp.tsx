@@ -328,38 +328,39 @@ export default function FlashcardApp() {
   }
 
   async function playTts(text?: string, cacheKey?: string, fallbackLang = 'zh-CN') {
-    if (!text || !audioRef.current) return;
+  if (!text) return;
 
-    const safeKey = cacheKey ?? text;
+  const safeKey = cacheKey ?? text;
 
-    try {
-      setTtsState({ key: safeKey, loading: true });
+  try {
+    setTtsState({ key: safeKey, loading: true });
 
-      const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
+    const response = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
 
-      if (!response.ok) throw new Error('TTS request failed');
+    if (!response.ok) throw new Error('TTS request failed');
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
 
-      audioRef.current.pause();
-      audioRef.current.src = url;
-      audioRef.current.currentTime = 0;
-      await audioRef.current.play();
+    const audio = new Audio(url);
+    audio.playsInline = true;
+    audio.preload = 'auto';
 
-      audioRef.current.onended = () => {
-        URL.revokeObjectURL(url);
-        setTtsState({ key: null, loading: false });
-      };
-    } catch {
+    await audio.play();
+
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
       setTtsState({ key: null, loading: false });
-      await speakBrowser(text, fallbackLang);
-    }
+    };
+  } catch {
+    setTtsState({ key: null, loading: false });
+    await speakBrowser(text, fallbackLang);
   }
+}
 
   async function saveTodayScore() {
     const trimmedName = playerName.trim();
