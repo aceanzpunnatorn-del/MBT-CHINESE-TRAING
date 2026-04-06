@@ -1,12 +1,3 @@
-useEffect(() => {
-  const mode = localStorage.getItem('midea-learning-mode');
-
-  if (mode === 'thai') {
-    console.log('โหมด ไทย → จีน');
-  } else if (mode === 'chinese') {
-    console.log('โหมด จีน → ไทย');
-  }
-}, []);
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -155,7 +146,8 @@ export default function FlashcardApp() {
  const [index, setIndex] = useState(0);
  const [flipped, setFlipped] = useState(false);
  const [mode, setMode] = useState<AppMode>('flashcards');
- const [learningMode, setLearningMode] = useState<LearningMode>('thai-learns-chinese');
+ const [learningMode, setLearningMode] =
+ useState<LearningMode>('thai-learns-chinese');
 
  const [showSentence, setShowSentence] = useState(true);
  const [showImage, setShowImage] = useState(true);
@@ -179,6 +171,19 @@ export default function FlashcardApp() {
  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
  const [saveMessage, setSaveMessage] = useState('');
  const [loadingBoard, setLoadingBoard] = useState(false);
+
+ useEffect(() => {
+ const savedMode = localStorage.getItem('midea-learning-mode');
+
+ if (savedMode === 'thai' || savedMode === 'thai-learns-chinese') {
+ setLearningMode('thai-learns-chinese');
+ } else if (
+ savedMode === 'chinese' ||
+ savedMode === 'chinese-learns-thai'
+ ) {
+ setLearningMode('chinese-learns-thai');
+ }
+ }, []);
 
  useEffect(() => {
  const savedName = localStorage.getItem('midea-player-name') || '';
@@ -255,14 +260,18 @@ export default function FlashcardApp() {
 
  if (learningMode === 'thai-learns-chinese') {
  const pool = shuffleArray(
- hsk4Data.filter((card) => card.th !== currentCard.th).map((card) => card.th)
+ hsk4Data
+ .filter((card) => card.th !== currentCard.th)
+ .map((card) => card.th)
  ).slice(0, 3);
 
  return shuffleArray([currentCard.th, ...pool]);
  }
 
  const pool = shuffleArray(
- hsk4Data.filter((card) => card.zh !== currentCard.zh).map((card) => card.zh)
+ hsk4Data
+ .filter((card) => card.zh !== currentCard.zh)
+ .map((card) => card.zh)
  ).slice(0, 3);
 
  return shuffleArray([currentCard.zh, ...pool]);
@@ -334,7 +343,11 @@ export default function FlashcardApp() {
  window.speechSynthesis.speak(utterance);
  }
 
- async function playTts(text?: string, cacheKey?: string, fallbackLang = 'zh-CN') {
+ async function playTts(
+ text?: string,
+ cacheKey?: string,
+ fallbackLang = 'zh-CN'
+ ) {
  if (!text) return;
 
  const safeKey = cacheKey ?? text;
@@ -458,7 +471,8 @@ export default function FlashcardApp() {
  </h1>
 
  <p className="text-sm text-white/90 sm:text-base md:text-lg">
- Daily learning, pronunciation practice, quiz, and ranking for internal staff
+ Daily learning, pronunciation practice, quiz, and ranking for internal
+ staff
  </p>
 
  <div className="mt-4 flex flex-wrap gap-2">
@@ -575,7 +589,9 @@ export default function FlashcardApp() {
  </div>
 
  <div className="space-y-2 rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
- <p className="text-sm font-semibold text-[#163047]">Pronunciation Tools</p>
+ <p className="text-sm font-semibold text-[#163047]">
+ Pronunciation Tools
+ </p>
 
  <button
  onClick={() => setShowPinyin((v) => !v)}
@@ -601,7 +617,9 @@ export default function FlashcardApp() {
 
  {showPinyinGuide && (
  <div className="rounded-2xl border border-[#D9E7F0] bg-white p-4">
- <p className="mb-3 text-sm font-semibold text-[#163047]">Pinyin Tone Guide</p>
+ <p className="mb-3 text-sm font-semibold text-[#163047]">
+ Pinyin Tone Guide
+ </p>
  <div className="grid gap-2 text-sm text-slate-700">
  <div className="rounded-xl bg-[#F8FCFE] p-3">
  <span className="font-semibold">Tone 1:</span> ā ē ī ō ū ǖ
@@ -620,7 +638,9 @@ export default function FlashcardApp() {
  )}
 
  <div>
- <p className="mb-2 text-sm font-medium text-[#163047]">Search Vocabulary</p>
+ <p className="mb-2 text-sm font-medium text-[#163047]">
+ Search Vocabulary
+ </p>
  <div className="relative">
  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7C8F]" />
  <input
@@ -702,8 +722,14 @@ export default function FlashcardApp() {
  <button
  onClick={() => {
  if (!playerName.trim()) return;
- localStorage.setItem('midea-player-name', playerName.trim());
- localStorage.setItem('midea-employee-code', employeeCode.trim());
+ localStorage.setItem(
+ 'midea-player-name',
+ playerName.trim()
+ );
+ localStorage.setItem(
+ 'midea-employee-code',
+ employeeCode.trim()
+ );
  localStorage.setItem('midea-department', department);
  setSaveMessage('Profile saved');
  setTimeout(() => setSaveMessage(''), 1500);
@@ -758,9 +784,13 @@ export default function FlashcardApp() {
  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs font-bold text-[#2EA7E0]">
  {i + 1}
  </span>
- <span className="font-medium text-[#163047]">{p.name}</span>
+ <span className="font-medium text-[#163047]">
+ {p.name}
+ </span>
  </div>
- <span className="font-semibold text-[#163047]">{p.score}</span>
+ <span className="font-semibold text-[#163047]">
+ {p.score}
+ </span>
  </div>
 
  <div className="mt-1 pl-8 text-xs text-[#6B7C8F]">
@@ -801,12 +831,18 @@ export default function FlashcardApp() {
  <span className="rounded-full bg-white/15 px-3 py-1 text-sm">
  {currentCard.category}
  </span>
- {showImage && <span className="text-5xl">{currentCard.image || ' '}</span>}
+ {showImage && (
+ <span className="text-5xl">
+ {currentCard.image || ' '}
+ </span>
+ )}
  </div>
 
  <div className="space-y-5 text-center">
  <p className="text-sm uppercase tracking-[0.25em] text-white/75">
- {learningMode === 'thai-learns-chinese' ? 'Chinese' : 'Thai'}
+ {learningMode === 'thai-learns-chinese'
+ ? 'Chinese'
+ : 'Thai'}
  </p>
 
  <div className="flex items-center justify-center gap-3">
@@ -826,7 +862,9 @@ export default function FlashcardApp() {
  ? currentCard.zh
  : currentCard.th,
  `front-${learningMode}-${currentCard.id}`,
- learningMode === 'thai-learns-chinese' ? 'zh-CN' : 'th-TH'
+ learningMode === 'thai-learns-chinese'
+ ? 'zh-CN'
+ : 'th-TH'
  );
  }}
  className="rounded-full bg-white/15 p-3 text-white hover:bg-white/25"
@@ -842,17 +880,25 @@ export default function FlashcardApp() {
  {renderPinyinWithToneColor(currentCard.pinyin)}
  </div>
  )}
- {showThaiReading && currentCard.thaiPronunciation && (
- <p className="text-base text-white/85">{currentCard.thaiPronunciation}</p>
+ {showThaiReading &&
+ currentCard.thaiPronunciation && (
+ <p className="text-base text-white/85">
+ {currentCard.thaiPronunciation}
+ </p>
  )}
  </>
  ) : (
  <>
- {showThaiReading && currentCard.thaiPronunciation && (
- <p className="text-base text-white/85">{currentCard.thaiPronunciation}</p>
+ {showThaiReading &&
+ currentCard.thaiPronunciation && (
+ <p className="text-base text-white/85">
+ {currentCard.thaiPronunciation}
+ </p>
  )}
  {showPinyin && (
- <div className="text-base md:text-lg text-white/85">{currentCard.zh}</div>
+ <div className="text-base md:text-lg text-white/85">
+ {currentCard.zh}
+ </div>
  )}
  </>
  )}
@@ -860,7 +906,8 @@ export default function FlashcardApp() {
 
  <div className="text-center text-sm text-white/75">
  {ttsState.loading &&
- ttsState.key === `front-${learningMode}-${currentCard.id}`
+ ttsState.key ===
+ `front-${learningMode}-${currentCard.id}`
  ? 'Playing audio...'
  : 'Tap card to flip'}
  </div>
@@ -905,7 +952,11 @@ export default function FlashcardApp() {
  onClick={(e) => {
  e.stopPropagation();
  unlockAudio();
- void playTts(currentCard.th, `back-th-${currentCard.id}`, 'th-TH');
+ void playTts(
+ currentCard.th,
+ `back-th-${currentCard.id}`,
+ 'th-TH'
+ );
  }}
  className="rounded-full bg-[#F4FAFD] p-3 hover:bg-[#EAF7FD]"
  >
@@ -913,12 +964,17 @@ export default function FlashcardApp() {
  </button>
  </div>
 
- {showThaiReading && currentCard.thaiPronunciation && (
- <p className="text-base text-[#6B7C8F]">{currentCard.thaiPronunciation}</p>
+ {showThaiReading &&
+ currentCard.thaiPronunciation && (
+ <p className="text-base text-[#6B7C8F]">
+ {currentCard.thaiPronunciation}
+ </p>
  )}
 
  <div className="space-y-2 rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4 text-left">
- <p className="text-sm text-[#6B7C8F]">Thai → Chinese</p>
+ <p className="text-sm text-[#6B7C8F]">
+ Thai → Chinese
+ </p>
  <div className="flex items-center gap-3">
  <p className="text-xl font-semibold text-[#163047]">
  {currentCard.thToZh}
@@ -928,7 +984,11 @@ export default function FlashcardApp() {
  onClick={(e) => {
  e.stopPropagation();
  unlockAudio();
- void playTts(currentCard.zh, `back-zh-${currentCard.id}`, 'zh-CN');
+ void playTts(
+ currentCard.zh,
+ `back-zh-${currentCard.id}`,
+ 'zh-CN'
+ );
  }}
  className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
  >
@@ -938,17 +998,23 @@ export default function FlashcardApp() {
 
  {showPinyin && (
  <div className="text-base">
- {renderPinyinWithToneColorLight(currentCard.pinyin)}
+ {renderPinyinWithToneColorLight(
+ currentCard.pinyin
+ )}
  </div>
  )}
  </div>
 
  {showSentence && (
  <div className="space-y-2 rounded-2xl border border-[#D9E7F0] bg-[#F4FAFD] p-4 text-left">
- <p className="text-sm font-medium text-[#6B7C8F]">Example Sentence</p>
+ <p className="text-sm font-medium text-[#6B7C8F]">
+ Example Sentence
+ </p>
 
  <div className="flex items-start justify-between gap-3">
- <p className="text-lg text-[#163047]">{currentCard.sentenceZh}</p>
+ <p className="text-lg text-[#163047]">
+ {currentCard.sentenceZh}
+ </p>
  <button
  type="button"
  onClick={(e) => {
@@ -968,7 +1034,9 @@ export default function FlashcardApp() {
 
  {showPinyin && (
  <div className="text-sm sm:text-base">
- {renderPinyinWithToneColorLight(currentCard.sentencePinyin)}
+ {renderPinyinWithToneColorLight(
+ currentCard.sentencePinyin
+ )}
  </div>
  )}
 
@@ -1006,7 +1074,11 @@ export default function FlashcardApp() {
  onClick={(e) => {
  e.stopPropagation();
  unlockAudio();
- void playTts(currentCard.zh, `back-cn-${currentCard.id}`, 'zh-CN');
+ void playTts(
+ currentCard.zh,
+ `back-cn-${currentCard.id}`,
+ 'zh-CN'
+ );
  }}
  className="rounded-full bg-[#F4FAFD] p-3 hover:bg-[#EAF7FD]"
  >
@@ -1016,7 +1088,9 @@ export default function FlashcardApp() {
 
  {showPinyin && (
  <div className="text-base">
- {renderPinyinWithToneColorLight(currentCard.pinyin)}
+ {renderPinyinWithToneColorLight(
+ currentCard.pinyin
+ )}
  </div>
  )}
 
@@ -1031,7 +1105,11 @@ export default function FlashcardApp() {
  onClick={(e) => {
  e.stopPropagation();
  unlockAudio();
- void playTts(currentCard.th, `back-thai-${currentCard.id}`, 'th-TH');
+ void playTts(
+ currentCard.th,
+ `back-thai-${currentCard.id}`,
+ 'th-TH'
+ );
  }}
  className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
  >
@@ -1039,17 +1117,24 @@ export default function FlashcardApp() {
  </button>
  </div>
 
- {showThaiReading && currentCard.thaiPronunciation && (
- <p className="text-sm text-[#6B7C8F]">{currentCard.thaiPronunciation}</p>
+ {showThaiReading &&
+ currentCard.thaiPronunciation && (
+ <p className="text-sm text-[#6B7C8F]">
+ {currentCard.thaiPronunciation}
+ </p>
  )}
  </div>
 
  {showSentence && (
  <div className="space-y-2 rounded-2xl border border-[#D9E7F0] bg-[#F4FAFD] p-4 text-left">
- <p className="text-sm font-medium text-[#6B7C8F]">Example Sentence</p>
+ <p className="text-sm font-medium text-[#6B7C8F]">
+ Example Sentence
+ </p>
 
  <div className="flex items-start justify-between gap-3">
- <p className="text-lg text-[#163047]">{currentCard.sentenceTh}</p>
+ <p className="text-lg text-[#163047]">
+ {currentCard.sentenceTh}
+ </p>
  <button
  type="button"
  onClick={(e) => {
@@ -1090,7 +1175,9 @@ export default function FlashcardApp() {
 
  {showPinyin && (
  <div className="text-sm sm:text-base">
- {renderPinyinWithToneColorLight(currentCard.sentencePinyin)}
+ {renderPinyinWithToneColorLight(
+ currentCard.sentencePinyin
+ )}
  </div>
  )}
  </div>
@@ -1099,7 +1186,9 @@ export default function FlashcardApp() {
  )}
  </div>
 
- <p className="text-center text-sm text-[#6B7C8F]">Tap card to flip back</p>
+ <p className="text-center text-sm text-[#6B7C8F]">
+ Tap card to flip back
+ </p>
  </div>
  </CardShell>
  </motion.div>
@@ -1127,7 +1216,9 @@ export default function FlashcardApp() {
  </div>
 
  <div className="space-y-4 py-4 text-center">
- {showImage && <div className="text-5xl">{currentCard.image || ' '}</div>}
+ {showImage && (
+ <div className="text-5xl">{currentCard.image || ' '}</div>
+ )}
 
  <div className="flex items-center justify-center gap-3">
  <h2 className="text-3xl font-bold leading-tight text-[#163047] sm:text-4xl md:text-5xl">
@@ -1145,7 +1236,9 @@ export default function FlashcardApp() {
  ? currentCard.zh
  : currentCard.th,
  `quiz-main-${learningMode}-${currentCard.id}`,
- learningMode === 'thai-learns-chinese' ? 'zh-CN' : 'th-TH'
+ learningMode === 'thai-learns-chinese'
+ ? 'zh-CN'
+ : 'th-TH'
  );
  }}
  className="rounded-full bg-[#F4FAFD] p-3 hover:bg-[#EAF7FD]"
@@ -1194,7 +1287,9 @@ export default function FlashcardApp() {
  ? currentCard.sentenceZh
  : currentCard.sentenceTh,
  `quiz-sentence-${learningMode}-${currentCard.id}`,
- learningMode === 'thai-learns-chinese' ? 'zh-CN' : 'th-TH'
+ learningMode === 'thai-learns-chinese'
+ ? 'zh-CN'
+ : 'th-TH'
  );
  }}
  className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
@@ -1206,7 +1301,9 @@ export default function FlashcardApp() {
  {learningMode === 'thai-learns-chinese' ? (
  showPinyin && (
  <div className="mt-2">
- {renderPinyinWithToneColorLight(currentCard.sentencePinyin)}
+ {renderPinyinWithToneColorLight(
+ currentCard.sentencePinyin
+ )}
  </div>
  )
  ) : (
@@ -1231,12 +1328,15 @@ export default function FlashcardApp() {
  key={choice}
  className={cn(
  'min-h-[56px] rounded-2xl border px-4 py-4 text-left text-sm sm:px-5 sm:text-base',
- quizSubmitted && isCorrect && 'border-emerald-500 bg-emerald-50',
+ quizSubmitted &&
+ isCorrect &&
+ 'border-emerald-500 bg-emerald-50',
  quizSubmitted &&
  isSelected &&
  !isCorrect &&
  'border-rose-500 bg-rose-50',
- !quizSubmitted && 'border-[#D9E7F0] bg-white text-[#163047]'
+ !quizSubmitted &&
+ 'border-[#D9E7F0] bg-white text-[#163047]'
  )}
  onClick={() => submitQuiz(choice)}
  disabled={quizSubmitted}
@@ -1260,7 +1360,9 @@ export default function FlashcardApp() {
  <BadgeCheck className="h-4 w-4" />
  {quizAnswer === correctAnswer ? 'Correct' : 'Incorrect'}
  </div>
- <p className="mt-1 text-[#6B7C8F]">Correct answer: {correctAnswer}</p>
+ <p className="mt-1 text-[#6B7C8F]">
+ Correct answer: {correctAnswer}
+ </p>
  </div>
  )}
  </div>
