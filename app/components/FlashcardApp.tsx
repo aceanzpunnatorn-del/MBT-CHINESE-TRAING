@@ -1,3 +1,12 @@
+useEffect(() => {
+  const mode = localStorage.getItem('midea-learning-mode');
+
+  if (mode === 'thai') {
+    console.log('โหมด ไทย → จีน');
+  } else if (mode === 'chinese') {
+    console.log('โหมด จีน → ไทย');
+  }
+}, []);
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
