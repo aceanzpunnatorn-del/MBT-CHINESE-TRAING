@@ -15,7 +15,7 @@ export const sentenceBuilderData: SentenceBuilderItem[] = [
       source: 'factory' as const,
       difficulty: 'medium' as const,
       th: item.sentenceTh,
-      thRoman: item.sentenceThRoman || '',
+      thRoman: '',
       zh: item.sentenceZh,
       en: item.sentenceEn,
       tokensTh: tokenizeThai(item.sentenceTh),
