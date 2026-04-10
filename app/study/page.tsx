@@ -1,85 +1,56 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import React from 'react';
 import {
   ArrowLeft,
   BookOpen,
-  Brain,
-  Languages,
   Sparkles,
+  Languages,
+  Brain,
 } from 'lucide-react';
-import FlashcardApp from '../components/FlashcardApp';
+import FlashcardApp from '@/app/components/FlashcardApp';
 
-type LearningMode = 'thai' | 'chinese';
-type AppMode = 'flashcards' | 'quiz';
+type StudyMode = 'flashcards' | 'quiz';
+type StudyPath = 'thai-to-chinese' | 'chinese-to-thai';
 
 export default function StudyPage() {
-  const router = useRouter();
-  const [mounted, setMounted] = useState(false);
-  const [selectedMode, setSelectedMode] = useState<LearningMode>('thai');
-  const [selectedAppMode, setSelectedAppMode] =
-    useState<AppMode>('flashcards');
-
-  useEffect(() => {
-    const savedLearningMode =
-      (localStorage.getItem('midea-learning-mode') as LearningMode | null) ||
-      'thai';
-    const savedAppMode =
-      (localStorage.getItem('midea-app-mode') as AppMode | null) || 'flashcards';
-
-    setSelectedMode(savedLearningMode);
-    setSelectedAppMode(savedAppMode);
-    setMounted(true);
-  }, []);
-
-  const modeLabel = useMemo(() => {
-    return selectedMode === 'thai'
-      ? 'Thai Staff Learning Chinese'
-      : 'Chinese Staff Learning Thai';
-  }, [selectedMode]);
-
-  if (!mounted) {
-    return (
-      <main className="min-h-screen bg-[#EAF7FD] flex items-center justify-center">
-        <div className="rounded-[28px] border border-[#D9E7F0] bg-white px-8 py-6 text-[#163047] shadow-sm">
-          Loading study workspace...
-        </div>
-      </main>
-    );
-  }
+  const [studyPath, setStudyPath] = React.useState<StudyPath>('thai-to-chinese');
+  const [studyMode, setStudyMode] = React.useState<StudyMode>('flashcards');
 
   return (
-    <main className="min-h-screen bg-[#EAF7FD]">
-      <div className="mx-auto max-w-[1600px] px-4 py-4 sm:px-6 lg:px-8">
-        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+    <div className="min-h-screen bg-[#EAF4FB] px-4 py-4 md:px-8 md:py-6">
+      <div className="mx-auto max-w-[1400px] space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => router.push('/learn')}
-              className="inline-flex items-center gap-2 rounded-2xl border border-[#D9E7F0] bg-white px-4 py-3 text-sm font-medium text-[#163047] shadow-sm transition hover:bg-[#F8FCFE]"
+            <Link
+              href="/learn"
+              className="inline-flex items-center gap-2 rounded-2xl border border-[#D9E7F0] bg-white px-4 py-3 text-sm font-medium text-[#163047] shadow-sm hover:bg-[#F8FCFE]"
             >
               <ArrowLeft className="h-4 w-4" />
               Back to Learn
-            </button>
+            </Link>
 
-            <div className="inline-flex items-center gap-2 rounded-full bg-[#DFF3FD] px-4 py-2 text-sm text-[#1D8FC7]">
+            <div className="inline-flex items-center gap-2 rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] px-4 py-3 text-sm font-medium text-[#2EA7E0]">
               <Sparkles className="h-4 w-4" />
               Premium Study Flow
             </div>
 
-            <div className="rounded-full bg-white px-4 py-3 text-sm text-[#163047] shadow-sm border border-[#D9E7F0]">
-              Current Language: <span className="font-semibold">{modeLabel}</span>
+            <div className="rounded-2xl border border-[#D9E7F0] bg-white px-4 py-3 text-sm font-medium text-[#163047]">
+              Current Language:{' '}
+              <span className="font-semibold">
+                {studyPath === 'thai-to-chinese'
+                  ? 'Thai Staff Learning Chinese'
+                  : 'Chinese Staff Learning Thai'}
+              </span>
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => {
-                setSelectedMode('thai');
-                localStorage.setItem('midea-learning-mode', 'thai');
-              }}
-              className={`rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                selectedMode === 'thai'
+              onClick={() => setStudyPath('thai-to-chinese')}
+              className={`rounded-2xl px-4 py-3 text-sm font-medium ${
+                studyPath === 'thai-to-chinese'
                   ? 'bg-[#2EA7E0] text-white'
                   : 'border border-[#D9E7F0] bg-white text-[#163047]'
               }`}
@@ -88,12 +59,9 @@ export default function StudyPage() {
             </button>
 
             <button
-              onClick={() => {
-                setSelectedMode('chinese');
-                localStorage.setItem('midea-learning-mode', 'chinese');
-              }}
-              className={`rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                selectedMode === 'chinese'
+              onClick={() => setStudyPath('chinese-to-thai')}
+              className={`rounded-2xl px-4 py-3 text-sm font-medium ${
+                studyPath === 'chinese-to-thai'
                   ? 'bg-[#2EA7E0] text-white'
                   : 'border border-[#D9E7F0] bg-white text-[#163047]'
               }`}
@@ -102,12 +70,9 @@ export default function StudyPage() {
             </button>
 
             <button
-              onClick={() => {
-                setSelectedAppMode('flashcards');
-                localStorage.setItem('midea-app-mode', 'flashcards');
-              }}
-              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                selectedAppMode === 'flashcards'
+              onClick={() => setStudyMode('flashcards')}
+              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-medium ${
+                studyMode === 'flashcards'
                   ? 'bg-[#163047] text-white'
                   : 'border border-[#D9E7F0] bg-white text-[#163047]'
               }`}
@@ -117,12 +82,9 @@ export default function StudyPage() {
             </button>
 
             <button
-              onClick={() => {
-                setSelectedAppMode('quiz');
-                localStorage.setItem('midea-app-mode', 'quiz');
-              }}
-              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                selectedAppMode === 'quiz'
+              onClick={() => setStudyMode('quiz')}
+              className={`inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-medium ${
+                studyMode === 'quiz'
                   ? 'bg-[#163047] text-white'
                   : 'border border-[#D9E7F0] bg-white text-[#163047]'
               }`}
@@ -130,40 +92,48 @@ export default function StudyPage() {
               <Brain className="h-4 w-4" />
               Quiz
             </button>
+
+            <Link
+              href="/builder"
+              className="inline-flex items-center gap-2 rounded-2xl border border-[#D9E7F0] bg-white px-4 py-3 text-sm font-medium text-[#163047] hover:bg-[#F8FCFE]"
+            >
+              <Languages className="h-4 w-4" />
+              Sentence Builder
+            </Link>
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-[32px] border border-[#D9E7F0] bg-white shadow-[0_20px_60px_rgba(46,167,224,0.10)]">
-          <div className="border-b border-[#E8F1F6] bg-[linear-gradient(135deg,#F8FCFE_0%,#EAF7FD_100%)] px-6 py-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-sm text-[#1D8FC7] shadow-sm">
-                  <Languages className="h-4 w-4" />
-                  Midea Language Study Workspace
-                </div>
-                <h1 className="text-2xl font-bold text-[#163047]">
-                  {selectedAppMode === 'flashcards'
-                    ? 'Flashcard Learning'
-                    : 'Quiz Practice'}
-                </h1>
-                <p className="mt-1 text-sm text-[#6B7C8F]">
-                  Premium study view with the original FlashcardApp retained.
-                </p >
+        <div className="overflow-hidden rounded-[28px] border border-[#D9E7F0] bg-white shadow-sm">
+          <div className="flex flex-col gap-4 border-b border-[#E6EEF5] bg-[#F8FCFE] px-5 py-5 md:flex-row md:items-start md:justify-between md:px-6">
+            <div>
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-sm text-[#2EA7E0] shadow-sm">
+                <Sparkles className="h-4 w-4" />
+                Midea Language Study Workspace
               </div>
 
-              <div className="rounded-2xl bg-white px-4 py-3 text-sm text-[#163047] shadow-sm border border-[#E8F1F6]">
-                Active Path: <span className="font-semibold">{modeLabel}</span>
-              </div>
+              <h1 className="text-2xl font-bold text-[#163047]">Flashcard Learning</h1>
+              <p className="mt-1 text-sm text-[#6B7C8F]">
+                Premium study view with the original FlashcardApp retained.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-[#D9E7F0] bg-white px-4 py-3 text-sm text-[#163047] shadow-sm">
+              Active Path:{' '}
+              <span className="font-semibold">
+                {studyPath === 'thai-to-chinese'
+                  ? 'Thai Staff Learning Chinese'
+                  : 'Chinese Staff Learning Thai'}
+              </span>
             </div>
           </div>
 
-          <div className="bg-[#F4FAFD] p-3 sm:p-4 lg:p-6">
-            <div className="rounded-[28px] border border-[#D9E7F0] bg-white shadow-sm overflow-visible">
-              <FlashcardApp key={`${selectedMode}-${selectedAppMode}`} />
+          <div className="p-4 md:p-6">
+            <div className="rounded-[24px] border border-[#E6EEF5] bg-[#F8FCFE] p-2 md:p-3">
+              <FlashcardApp key={`${studyPath}-${studyMode}`} />
             </div>
           </div>
         </div>
       </div>
-    </main>
+    </div>
   );
 }
