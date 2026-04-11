@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import { useState } from 'react';
+import { getOrCreateUser } from '@/lib/user';
 import {
   ArrowRight,
   Building2,
@@ -18,18 +19,45 @@ export default function Page() {
   const [name, setName] = useState('');
   const [department, setDepartment] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = () => {
-    if (!employeeId.trim() || !name.trim() || !department.trim()) {
+  const handleSubmit = async () => {
+    const trimmedEmployeeId = employeeId.trim();
+    const trimmedName = name.trim();
+    const trimmedDepartment = department.trim();
+
+    if (!trimmedEmployeeId || !trimmedName || !trimmedDepartment) {
       setError('Please complete Employee ID, Name, and Department.');
       return;
     }
 
-    localStorage.setItem('midea-player-name', name.trim());
-    localStorage.setItem('midea-employee-code', employeeId.trim());
-    localStorage.setItem('midea-department', department.trim());
+    try {
+      setLoading(true);
+      setError('');
 
-    window.location.href = '/learn';
+      const user = await getOrCreateUser({
+        name: trimmedName,
+        employeeCode: trimmedEmployeeId,
+        department: trimmedDepartment,
+      });
+
+      localStorage.setItem('midea-player-name', user.name || trimmedName);
+      localStorage.setItem(
+        'midea-employee-code',
+        user.employee_code || trimmedEmployeeId
+      );
+      localStorage.setItem(
+        'midea-department',
+        user.department || trimmedDepartment
+      );
+
+      window.location.href = '/learn';
+    } catch (err) {
+      console.error('Login failed:', err);
+      setError('Unable to sign in right now. Please check Supabase and try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -54,7 +82,7 @@ export default function Page() {
               <div>
                 <p className="text-[11px] uppercase tracking-[0.34em] text-white/70">
                   Internal Learning Platform
-                </p >
+                </p>
                 <h2 className="text-2xl font-bold text-white">Midea Thailand</h2>
               </div>
             </div>
@@ -74,29 +102,29 @@ export default function Page() {
               <p className="mt-6 max-w-2xl text-lg leading-8 text-white/82">
                 Improve communication, reduce misunderstanding, and support
                 practical language learning for daily factory operations.
-              </p >
+              </p>
 
               <div className="mt-10 grid max-w-3xl gap-4 sm:grid-cols-3">
                 <div className="rounded-[28px] border border-white/20 bg-white/10 p-5 text-white backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
-                  <p className="text-sm text-white/70">Focus</p >
-                  <p className="mt-3 text-lg font-semibold">Thai ↔ Chinese</p >
+                  <p className="text-sm text-white/70">Focus</p>
+                  <p className="mt-3 text-lg font-semibold">Thai ↔ Chinese</p>
                 </div>
 
                 <div className="rounded-[28px] border border-white/20 bg-white/10 p-5 text-white backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
-                  <p className="text-sm text-white/70">Use Case</p >
-                  <p className="mt-3 text-lg font-semibold">Factory Communication</p >
+                  <p className="text-sm text-white/70">Use Case</p>
+                  <p className="mt-3 text-lg font-semibold">Factory Communication</p>
                 </div>
 
                 <div className="rounded-[28px] border border-white/20 bg-white/10 p-5 text-white backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
-                  <p className="text-sm text-white/70">Modules</p >
-                  <p className="mt-3 text-lg font-semibold">Flashcards & Quiz</p >
+                  <p className="text-sm text-white/70">Modules</p>
+                  <p className="mt-3 text-lg font-semibold">Flashcards & Quiz</p>
                 </div>
               </div>
             </div>
 
             <div className="flex items-end justify-between gap-6">
               <div className="rounded-[28px] border border-white/20 bg-white/10 px-5 py-4 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
-                <p className="text-sm text-white/70">Brand Identity</p >
+                <p className="text-sm text-white/70">Brand Identity</p>
                 <div className="mt-3">
                   <Image
                     src="/midea-logo.png"
@@ -111,7 +139,7 @@ export default function Page() {
 
               <p className="text-sm text-white/68">
                 Corporate premium login experience
-              </p >
+              </p>
             </div>
           </div>
         </section>
@@ -149,7 +177,7 @@ export default function Page() {
                     <p className="max-w-md text-base leading-7 text-[#5F7388]">
                       Sign in to continue to language mode selection, flashcards,
                       and quiz practice.
-                    </p >
+                    </p>
                   </div>
                 </div>
 
@@ -207,11 +235,14 @@ export default function Page() {
 
                   <button
                     onClick={handleSubmit}
-                    className="group flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#2EA7E0] to-[#1D8FC7] px-4 py-3 text-base font-semibold text-white shadow-[0_14px_30px_rgba(46,167,224,0.32)] transition duration-200 hover:translate-y-[-1px] hover:shadow-[0_18px_36px_rgba(29,143,199,0.36)]"
+                    disabled={loading}
+                    className="group flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#2EA7E0] to-[#1D8FC7] px-4 py-3 text-base font-semibold text-white shadow-[0_14px_30px_rgba(46,167,224,0.32)] transition duration-200 hover:translate-y-[-1px] hover:shadow-[0_18px_36px_rgba(29,143,199,0.36)] disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     <LogIn className="h-4 w-4" />
-                    Enter Platform
-                    <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+                    {loading ? 'Signing In...' : 'Enter Platform'}
+                    {!loading && (
+                      <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+                    )}
                   </button>
                 </div>
 
@@ -220,12 +251,12 @@ export default function Page() {
                     <Users className="h-4 w-4 text-[#1D8FC7]" />
                     <p className="text-sm font-medium text-[#163047]">
                       Learning Purpose
-                    </p >
+                    </p>
                   </div>
                   <p className="text-sm leading-6 text-[#5F7388]">
                     Support Thai-Chinese communication, reduce misunderstanding,
                     and encourage staff language development for real workplace use.
-                  </p >
+                  </p>
                 </div>
               </div>
             </div>
