@@ -1,24 +1,51 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  BadgeCheck,
-  BookOpen,
   Building2,
   Flame,
-  Image as ImageIcon,
+  Heart,
   RotateCcw,
   Search,
+  Shield,
   Shuffle,
   Sparkles,
+  Star,
   Trophy,
   Users,
-  Volume2,
 } from 'lucide-react';
+
 import { hsk4Data } from '@/lib/hsk4-data';
 import { factoryEnglish900th } from '@/lib/factory-english-900-th';
 import { supabase } from '@/lib/supabase';
+import { getUserSession, updateUserSession } from '@/lib/session';
+import { getUserProgress, upsertUserProgress } from '@/lib/progress';
+import {
+  getWeakWords,
+  getDueReviewWords,
+  recordWordResult,
+  recordWordReviewRating,
+} from '@/lib/word-stats';
+import { applyRatingToReviewQueue, createReviewQueue } from '@/lib/srs';
+import { getUserMetrics, type UserMetrics } from '@/lib/analytics';
+import { getRecommendedWords, type RecommendedWord } from '@/lib/recommendation';
+import { generateHint } from '@/lib/ai';
+
+import { ReviewPanel, ReviewComplete, type ReviewRating } from '@/app/components/ReviewPanel';
+import { ManagerDashboard } from '@/app/components/ManagerDashboard';
+import { FlashcardView } from '@/app/components/FlashcardView';
+import { QuizView } from '@/app/components/QuizView';
+import { AnalyticsPanel } from '@/app/components/AnalyticsPanel';
+import { SpeakingPracticePanel } from '@/app/components/SpeakingPracticePanel';
+
+import type {
+  AppMode,
+  AppUser,
+  DeckMode,
+  LearningMode,
+  VocabSet,
+} from '@/types/app';
 
 function cn(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(' ');
@@ -49,24 +76,20 @@ function CardShell({
 function renderPinyinWithToneColor(text?: string) {
   if (!text) return null;
 
-  const tone1 = /[āēīōūǖ]/;
-  const tone2 = /[áéíóúǘ]/;
-  const tone3 = /[ǎěǐǒǔǚ]/;
-  const tone4 = /[àèìòùǜ]/;
+  const tone1 = /[\u0101\u0113\u012b\u014d\u016b\u01d6]/u;
+  const tone2 = /[\u00e1\u00e9\u00ed\u00f3\u00fa\u01d8]/u;
+  const tone3 = /[\u01ce\u011b\u01d0\u01d2\u01d4\u01da]/u;
+  const tone4 = /[\u00e0\u00e8\u00ec\u00f2\u00f9\u01dc]/u;
 
   return text.split(' ').map((syllable, index) => {
     let className = 'text-white';
-
     if (tone1.test(syllable)) className = 'text-sky-300';
     else if (tone2.test(syllable)) className = 'text-emerald-300';
     else if (tone3.test(syllable)) className = 'text-yellow-300';
     else if (tone4.test(syllable)) className = 'text-rose-300';
 
     return (
-      <span
-        key={`${syllable}-${index}`}
-        className={`mr-2 font-semibold drop-shadow-sm ${className}`}
-      >
+      <span key={`${syllable}-${index}`} className={`mr-2 font-semibold drop-shadow-sm ${className}`}>
         {syllable}
       </span>
     );
@@ -76,14 +99,13 @@ function renderPinyinWithToneColor(text?: string) {
 function renderPinyinWithToneColorLight(text?: string) {
   if (!text) return null;
 
-  const tone1 = /[āēīōūǖ]/;
-  const tone2 = /[áéíóúǘ]/;
-  const tone3 = /[ǎěǐǒǔǚ]/;
-  const tone4 = /[àèìòùǜ]/;
+  const tone1 = /[\u0101\u0113\u012b\u014d\u016b\u01d6]/u;
+  const tone2 = /[\u00e1\u00e9\u00ed\u00f3\u00fa\u01d8]/u;
+  const tone3 = /[\u01ce\u011b\u01d0\u01d2\u01d4\u01da]/u;
+  const tone4 = /[\u00e0\u00e8\u00ec\u00f2\u00f9\u01dc]/u;
 
   return text.split(' ').map((syllable, index) => {
     let className = 'text-slate-700';
-
     if (tone1.test(syllable)) className = 'text-sky-600';
     else if (tone2.test(syllable)) className = 'text-emerald-600';
     else if (tone3.test(syllable)) className = 'text-amber-600';
@@ -106,15 +128,7 @@ function shuffleArray<T>(items: T[]) {
   return cloned;
 }
 
-function unlockAudio() {
-  const audio = new Audio();
-  audio.play().catch(() => {});
-}
-
-type AppMode = 'flashcards' | 'quiz';
-type LearningMode = 'thai-learns-chinese' | 'chinese-learns-thai';
 type RankingPeriod = 'daily' | 'weekly' | 'monthly';
-type VocabularySource = 'all' | 'hsk4' | 'factory';
 
 type TtsAudioState = {
   key: string | null;
@@ -149,6 +163,36 @@ type DisplayCard = {
   source: 'hsk4' | 'factory';
 };
 
+type Hsk4DataItem = {
+  id?: string | number;
+  zh: string;
+  pinyin?: string;
+  th: string;
+  thToZh?: string;
+  category?: string;
+  sentenceZh?: string;
+  sentencePinyin?: string;
+  sentenceTh?: string;
+  sentenceEn?: string;
+  thaiPronunciation?: string;
+  sentenceThaiPronunciation?: string;
+  image?: string;
+};
+
+type FactoryDataItem = {
+  id: string | number;
+  zhMeaning: string;
+  en?: string;
+  thMeaning: string;
+  pos?: string;
+  sentenceZh?: string;
+  uk?: string;
+  sentenceTh?: string;
+  sentenceEn?: string;
+  us?: string;
+  code?: string;
+};
+
 const DEPARTMENTS = [
   'HR',
   'Production',
@@ -163,13 +207,70 @@ const DEPARTMENTS = [
   'Other',
 ];
 
+const MOJIBAKE_PATTERN = /[\u00c3\u00c4\u00c5\u00c7\u00f0\u00e2]|\uFFFD/u;
+
+function getSafeCardImage(image: string | undefined, source: 'hsk4' | 'factory') {
+  const trimmed = image?.trim();
+
+  if (!trimmed || MOJIBAKE_PATTERN.test(trimmed)) {
+    return source === 'hsk4' ? '\u{1F4D8}' : '\u{1F3ED}';
+  }
+
+  return trimmed;
+}
+
+function normalizeCard(
+  item: Hsk4DataItem | FactoryDataItem,
+  idx: number,
+  source: 'hsk4' | 'factory'
+): DisplayCard {
+  if (source === 'hsk4') {
+    const hskItem = item as Hsk4DataItem;
+
+    return {
+      id: `hsk4-${hskItem.id ?? idx + 1}`,
+      zh: hskItem.zh,
+      pinyin: hskItem.pinyin,
+      th: hskItem.th,
+      thToZh: hskItem.thToZh,
+      category: hskItem.category || 'HSK4',
+      sentenceZh: hskItem.sentenceZh,
+      sentencePinyin: hskItem.sentencePinyin,
+      sentenceTh: hskItem.sentenceTh,
+      sentenceEn: hskItem.sentenceEn || '',
+      thaiPronunciation: hskItem.thaiPronunciation,
+      sentenceThaiPronunciation: hskItem.sentenceThaiPronunciation,
+      image: getSafeCardImage(hskItem.image, 'hsk4'),
+      source: 'hsk4',
+    };
+  }
+
+  const factoryItem = item as FactoryDataItem;
+
+  return {
+    id: `factory-${factoryItem.id}`,
+    zh: factoryItem.zhMeaning,
+    pinyin: factoryItem.en,
+    th: factoryItem.thMeaning,
+    thToZh: factoryItem.zhMeaning,
+    category: factoryItem.pos || 'Factory English',
+    sentenceZh: factoryItem.sentenceZh,
+    sentencePinyin: factoryItem.uk,
+    sentenceTh: factoryItem.sentenceTh,
+    sentenceEn: factoryItem.sentenceEn,
+    thaiPronunciation: factoryItem.us,
+    sentenceThaiPronunciation: factoryItem.code,
+    image: getSafeCardImage(undefined, 'factory'),
+    source: 'factory',
+  };
+}
+
 export default function FlashcardApp() {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [mode, setMode] = useState<AppMode>('flashcards');
-  const [learningMode, setLearningMode] =
-    useState<LearningMode>('thai-learns-chinese');
+  const [learningMode, setLearningMode] = useState<LearningMode>('thai-learns-chinese');
 
   const [showSentence, setShowSentence] = useState(true);
   const [showImage, setShowImage] = useState(true);
@@ -190,13 +291,18 @@ export default function FlashcardApp() {
   const [playerName, setPlayerName] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
   const [department, setDepartment] = useState('HR');
+  const [sessionUser, setSessionUser] = useState<AppUser | null>(null);
+  const [lastStudyDate, setLastStudyDate] = useState('');
+  const [progressLoaded, setProgressLoaded] = useState(false);
+
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [saveMessage, setSaveMessage] = useState('');
   const [loadingBoard, setLoadingBoard] = useState(false);
   const [rankingPeriod, setRankingPeriod] = useState<RankingPeriod>('daily');
   const [playerCount, setPlayerCount] = useState(0);
-  const [vocabularySource, setVocabularySource] =
-    useState<VocabularySource>('all');
+
+  const [vocabularySource, setVocabularySource] = useState<VocabSet>('all');
+  const [deckMode, setDeckMode] = useState<DeckMode>('smart');
 
   const [streak, setStreak] = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
@@ -205,23 +311,44 @@ export default function FlashcardApp() {
   const [answerResult, setAnswerResult] = useState<'correct' | 'wrong' | null>(null);
   const [showStreakBurst, setShowStreakBurst] = useState(false);
 
+  const [lives, setLives] = useState(3);
+  const [xp, setXp] = useState(0);
+  const [level, setLevel] = useState(1);
+
+  const [weakWordIds, setWeakWordIds] = useState<string[]>([]);
+  const [dueReviewIds, setDueReviewIds] = useState<string[]>([]);
+  const [smartDeckRefreshKey, setSmartDeckRefreshKey] = useState(0);
+
+  const [reviewQueue, setReviewQueue] = useState<string[]>([]);
+  const [reviewSessionTotal, setReviewSessionTotal] = useState(0);
+  const [reviewDone, setReviewDone] = useState(false);
+  const [sessionCardCount, setSessionCardCount] = useState(0);
+  const [userMetrics, setUserMetrics] = useState<UserMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [recommendedWords, setRecommendedWords] = useState<RecommendedWord[]>([]);
+  const [recommendationLoading, setRecommendationLoading] = useState(false);
+  const [quizHint, setQuizHint] = useState('');
+  const [quizHintLoading, setQuizHintLoading] = useState(false);
+
+  const [showManagerDashboard, setShowManagerDashboard] = useState(true);
+
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+
   useEffect(() => {
     const savedLearningMode = localStorage.getItem('midea-learning-mode');
     const savedAppMode = localStorage.getItem('midea-app-mode');
 
-    if (
-      savedLearningMode === 'thai' ||
-      savedLearningMode === 'thai-learns-chinese'
-    ) {
+    if (savedLearningMode === 'thai' || savedLearningMode === 'thai-learns-chinese') {
       setLearningMode('thai-learns-chinese');
-    } else if (
-      savedLearningMode === 'chinese' ||
-      savedLearningMode === 'chinese-learns-thai'
-    ) {
+    } else if (savedLearningMode === 'chinese' || savedLearningMode === 'chinese-learns-thai') {
       setLearningMode('chinese-learns-thai');
     }
 
-    if (savedAppMode === 'flashcards' || savedAppMode === 'quiz') {
+    if (
+      savedAppMode === 'flashcards' ||
+      savedAppMode === 'quiz' ||
+      savedAppMode === 'review'
+    ) {
       setMode(savedAppMode);
     }
   }, []);
@@ -238,13 +365,29 @@ export default function FlashcardApp() {
   }, [mode]);
 
   useEffect(() => {
-    const savedName = localStorage.getItem('midea-player-name') || '';
-    const savedCode = localStorage.getItem('midea-employee-code') || '';
-    const savedDept = localStorage.getItem('midea-department') || 'HR';
+    const session = getUserSession();
 
-    if (savedName) setPlayerName(savedName);
-    if (savedCode) setEmployeeCode(savedCode);
-    if (savedDept) setDepartment(savedDept);
+    if (session) {
+      setSessionUser(session);
+      setPlayerName(session.name || '');
+      setEmployeeCode(session.employee_code || '');
+      setDepartment(session.department || 'HR');
+    } else {
+      const savedName = localStorage.getItem('midea-player-name') || '';
+      const savedCode = localStorage.getItem('midea-employee-code') || '';
+      const savedDept = localStorage.getItem('midea-department') || 'HR';
+      if (savedName) setPlayerName(savedName);
+      if (savedCode) setEmployeeCode(savedCode);
+      if (savedDept) setDepartment(savedDept);
+    }
+
+    const savedLives = Number(localStorage.getItem('midea-lives') || '3');
+    const savedXp = Number(localStorage.getItem('midea-xp') || '0');
+    const savedLevel = Number(localStorage.getItem('midea-level') || '1');
+
+    setLives(savedLives > 0 ? savedLives : 3);
+    setXp(savedXp);
+    setLevel(savedLevel > 0 ? savedLevel : 1);
 
     return () => {
       window.speechSynthesis?.cancel();
@@ -252,40 +395,213 @@ export default function FlashcardApp() {
   }, []);
 
   useEffect(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    const savedStreak = Number(localStorage.getItem('midea-streak') || '0');
-    const savedBestStreak = Number(localStorage.getItem('midea-best-streak') || '0');
-    const savedLastStudyDate = localStorage.getItem('midea-last-study-date') || '';
-    const savedTodayDone = localStorage.getItem('midea-today-done') === 'true';
-    const savedCombo = Number(localStorage.getItem('midea-combo') || '0');
+    localStorage.setItem('midea-lives', String(lives));
+    localStorage.setItem('midea-xp', String(xp));
+    localStorage.setItem('midea-level', String(level));
+  }, [lives, xp, level]);
 
-    setStreak(savedStreak);
-    setBestStreak(savedBestStreak);
-    setCombo(savedCombo);
+  useEffect(() => {
+    let cancelled = false;
 
-    if (savedLastStudyDate === today && savedTodayDone) {
-      setTodayDone(true);
-    } else {
-      setTodayDone(false);
-      localStorage.setItem('midea-today-done', 'false');
+    async function loadProgress() {
+      if (!sessionUser?.id) {
+        const today = new Date().toISOString().slice(0, 10);
+        const savedStreak = Number(localStorage.getItem('midea-streak') || '0');
+        const savedBestStreak = Number(localStorage.getItem('midea-best-streak') || '0');
+        const savedLastStudyDate = localStorage.getItem('midea-last-study-date') || '';
+        const savedTodayDone = localStorage.getItem('midea-today-done') === 'true';
+        const savedCombo = Number(localStorage.getItem('midea-combo') || '0');
+
+        if (cancelled) return;
+
+        setStreak(savedStreak);
+        setBestStreak(savedBestStreak);
+        setCombo(savedCombo);
+        setLastStudyDate(savedLastStudyDate);
+        setTodayDone(savedLastStudyDate === today && savedTodayDone);
+        setProgressLoaded(true);
+        return;
+      }
+
+      try {
+        const progress = await getUserProgress(
+          sessionUser.id,
+          learningMode,
+          vocabularySource
+        );
+
+        if (cancelled) return;
+
+        if (progress) {
+          setIndex(progress.current_index ?? 0);
+          setStreak(progress.streak ?? 0);
+          setBestStreak(progress.best_streak ?? 0);
+          setCombo(progress.combo ?? 0);
+          setTodayDone(Boolean(progress.today_done));
+          setLastStudyDate(progress.last_study_date ?? '');
+        } else {
+          setIndex(0);
+          setStreak(0);
+          setBestStreak(0);
+          setCombo(0);
+          setTodayDone(false);
+          setLastStudyDate('');
+        }
+      } catch {
+        if (cancelled) return;
+      }
+
+      setProgressLoaded(true);
     }
-  }, []);
+
+    setProgressLoaded(false);
+    void loadProgress();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUser?.id, learningMode, vocabularySource]);
 
   useEffect(() => {
+    if (!progressLoaded) return;
+
     localStorage.setItem('midea-streak', String(streak));
-  }, [streak]);
-
-  useEffect(() => {
     localStorage.setItem('midea-best-streak', String(bestStreak));
-  }, [bestStreak]);
+    localStorage.setItem('midea-combo', String(combo));
+    localStorage.setItem('midea-last-study-date', lastStudyDate);
+    localStorage.setItem('midea-today-done', todayDone ? 'true' : 'false');
+
+    if (!sessionUser?.id) return;
+
+    void upsertUserProgress({
+      userId: sessionUser.id,
+      learningMode,
+      vocabSet: vocabularySource,
+      currentIndex: index,
+      streak,
+      bestStreak,
+      combo,
+      todayDone,
+      lastStudyDate,
+    });
+  }, [
+    sessionUser?.id,
+    progressLoaded,
+    learningMode,
+    vocabularySource,
+    index,
+    streak,
+    bestStreak,
+    combo,
+    todayDone,
+    lastStudyDate,
+  ]);
 
   useEffect(() => {
-    localStorage.setItem('midea-combo', String(combo));
-  }, [combo]);
+    async function loadSmartDecks() {
+      if (!sessionUser?.id) {
+        setWeakWordIds([]);
+        setDueReviewIds([]);
+        return;
+      }
+
+      try {
+        const [weakRows, dueRows] = await Promise.all([
+          getWeakWords({
+            userId: sessionUser.id,
+            learningMode,
+            vocabSet: vocabularySource,
+            limit: 50,
+          }),
+          getDueReviewWords({
+            userId: sessionUser.id,
+            learningMode,
+            vocabSet: vocabularySource,
+          }),
+        ]);
+
+        setWeakWordIds(weakRows.map((row) => row.card_id));
+        setDueReviewIds(dueRows.map((row) => row.card_id));
+      } catch {
+        setWeakWordIds([]);
+        setDueReviewIds([]);
+      }
+    }
+
+    void loadSmartDecks();
+  }, [
+    sessionUser?.id,
+    learningMode,
+    vocabularySource,
+    quizScore.total,
+    mode,
+    smartDeckRefreshKey,
+  ]);
 
   useEffect(() => {
     void loadLeaderboard();
   }, [learningMode, rankingPeriod]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUserMetrics() {
+      if (!sessionUser?.id) {
+        if (!cancelled) setUserMetrics(null);
+        return;
+      }
+
+      setMetricsLoading(true);
+
+      try {
+        const nextMetrics = await getUserMetrics(sessionUser.id);
+        if (!cancelled) setUserMetrics(nextMetrics);
+      } catch {
+        if (!cancelled) setUserMetrics(null);
+      } finally {
+        if (!cancelled) setMetricsLoading(false);
+      }
+    }
+
+    void loadUserMetrics();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUser?.id, learningMode, vocabularySource, smartDeckRefreshKey, quizScore.total]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRecommendations() {
+      if (!sessionUser?.id) {
+        if (!cancelled) setRecommendedWords([]);
+        return;
+      }
+
+      setRecommendationLoading(true);
+
+      try {
+        const nextRecommendations = await getRecommendedWords(sessionUser.id, {
+          limit: 18,
+          learningMode,
+          vocabSet: vocabularySource,
+        });
+
+        if (!cancelled) setRecommendedWords(nextRecommendations);
+      } catch {
+        if (!cancelled) setRecommendedWords([]);
+      } finally {
+        if (!cancelled) setRecommendationLoading(false);
+      }
+    }
+
+    void loadRecommendations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUser?.id, learningMode, vocabularySource, smartDeckRefreshKey, quizScore.total]);
 
   function getDateRange(period: RankingPeriod) {
     const now = new Date();
@@ -296,16 +612,12 @@ export default function FlashcardApp() {
 
     if (period === 'daily') {
       start.setHours(0, 0, 0, 0);
-    }
-
-    if (period === 'weekly') {
+    } else if (period === 'weekly') {
       const day = start.getDay();
       const diff = day === 0 ? 6 : day - 1;
       start.setDate(start.getDate() - diff);
       start.setHours(0, 0, 0, 0);
-    }
-
-    if (period === 'monthly') {
+    } else {
       start.setDate(1);
       start.setHours(0, 0, 0, 0);
     }
@@ -333,12 +645,8 @@ export default function FlashcardApp() {
 
       (data as LeaderboardEntry[]).forEach((item) => {
         const key = item.employee_code || item.name;
-
         if (!grouped.has(key)) {
-          grouped.set(key, {
-            ...item,
-            score: Number(item.score) || 0,
-          });
+          grouped.set(key, { ...item, score: Number(item.score) || 0 });
         } else {
           const existing = grouped.get(key)!;
           existing.score += Number(item.score) || 0;
@@ -360,48 +668,29 @@ export default function FlashcardApp() {
   }
 
   const mergedCards = useMemo<DisplayCard[]>(() => {
-    const hskCards: DisplayCard[] = hsk4Data.map((item: any, idx: number) => ({
-      id: `hsk4-${item.id ?? idx + 1}`,
-      zh: item.zh,
-      pinyin: item.pinyin,
-      th: item.th,
-      thToZh: item.thToZh,
-      category: item.category || 'HSK4',
-      sentenceZh: item.sentenceZh,
-      sentencePinyin: item.sentencePinyin,
-      sentenceTh: item.sentenceTh,
-      sentenceEn: item.sentenceEn || '',
-      thaiPronunciation: item.thaiPronunciation,
-      sentenceThaiPronunciation: item.sentenceThaiPronunciation,
-      image: item.image || '📘',
-      source: 'hsk4',
-    }));
-
-    const factoryCards: DisplayCard[] = factoryEnglish900th.map((item) => ({
-      id: `factory-${item.id}`,
-      zh: item.zhMeaning,
-      pinyin: item.en,
-      th: item.thMeaning,
-      thToZh: item.zhMeaning,
-      category: item.pos || 'Factory English',
-      sentenceZh: item.sentenceZh,
-      sentencePinyin: item.uk,
-      sentenceTh: item.sentenceTh,
-      sentenceEn: item.sentenceEn,
-      thaiPronunciation: item.us,
-      sentenceThaiPronunciation: item.code,
-      image: '🏭',
-      source: 'factory',
-    }));
+    const hskCards = (hsk4Data as readonly Hsk4DataItem[]).map((item, idx) =>
+      normalizeCard(item, idx, 'hsk4')
+    );
+    const factoryCards = (factoryEnglish900th as readonly FactoryDataItem[]).map((item, idx) =>
+      normalizeCard(item, idx, 'factory')
+    );
 
     if (vocabularySource === 'hsk4') return hskCards;
     if (vocabularySource === 'factory') return factoryCards;
     return [...hskCards, ...factoryCards];
   }, [vocabularySource]);
 
+  const effectiveCards = useMemo(() => {
+    if (combo >= 5 && vocabularySource === 'all') {
+      const harder = mergedCards.filter((card) => card.source === 'factory');
+      return harder.length ? harder : mergedCards;
+    }
+    return mergedCards;
+  }, [mergedCards, combo, vocabularySource]);
+
   const filteredCards = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let result = [...mergedCards];
+    let result = [...effectiveCards];
 
     if (q) {
       result = result.filter((card) =>
@@ -425,64 +714,215 @@ export default function FlashcardApp() {
     }
 
     if (deckSeed > 0) result = shuffleArray(result);
-
     return result;
-  }, [query, deckSeed, mergedCards]);
+  }, [query, deckSeed, effectiveCards]);
 
-  const currentCard = filteredCards[index] ?? null;
+  const cardById = useMemo(() => {
+    return new Map(mergedCards.map((card) => [card.id, card]));
+  }, [mergedCards]);
 
-  const progress = filteredCards.length
-    ? Math.round(((index + 1) / filteredCards.length) * 100)
-    : 0;
+  const fallbackRecommendations = useMemo<RecommendedWord[]>(() => {
+    const seen = new Set<string>();
+    const recommendations: RecommendedWord[] = [];
 
-  const quizChoices = useMemo(() => {
-    if (!currentCard) return [];
+    dueReviewIds.forEach((cardId, index) => {
+      if (seen.has(cardId)) return;
+      const card = cardById.get(cardId);
+      if (!card) return;
 
-    if (learningMode === 'thai-learns-chinese') {
-      const pool = shuffleArray(
-        filteredCards
-          .filter((card) => card.th !== currentCard.th)
-          .map((card) => card.th)
-      ).slice(0, 3);
+      seen.add(cardId);
+      recommendations.push({
+        cardId,
+        vocabSet: card.source,
+        reason: 'review',
+        score: 90 - index,
+        accuracy: null,
+        nextReviewAt: null,
+      });
+    });
 
-      return shuffleArray([currentCard.th, ...pool]);
+    weakWordIds.forEach((cardId, index) => {
+      if (seen.has(cardId)) return;
+      const card = cardById.get(cardId);
+      if (!card) return;
+
+      seen.add(cardId);
+      recommendations.push({
+        cardId,
+        vocabSet: card.source,
+        reason: 'weak',
+        score: 70 - index,
+        accuracy: null,
+        nextReviewAt: null,
+      });
+    });
+
+    filteredCards.slice(0, 12).forEach((card, index) => {
+      if (seen.has(card.id)) return;
+
+      seen.add(card.id);
+      recommendations.push({
+        cardId: card.id,
+        vocabSet: card.source,
+        reason: 'new',
+        score: 20 - index,
+        accuracy: null,
+        nextReviewAt: null,
+      });
+    });
+
+    return recommendations;
+  }, [cardById, dueReviewIds, weakWordIds, filteredCards]);
+
+  const activeRecommendations = useMemo(
+    () => (recommendedWords.length > 0 ? recommendedWords : fallbackRecommendations),
+    [recommendedWords, fallbackRecommendations]
+  );
+
+  const smartDeckCards = useMemo(() => {
+    const orderedCards = activeRecommendations
+      .map((item) => filteredCards.find((card) => card.id === item.cardId))
+      .filter((card): card is DisplayCard => Boolean(card));
+
+    return orderedCards.length > 0 ? orderedCards : filteredCards;
+  }, [activeRecommendations, filteredCards]);
+
+  const recommendationSummary = useMemo(() => {
+    return activeRecommendations.reduce(
+      (summary, item) => {
+        summary[item.reason] += 1;
+        return summary;
+      },
+      { review: 0, weak: 0, low_accuracy: 0, new: 0 }
+    );
+  }, [activeRecommendations]);
+
+  const smartFilteredCards = useMemo(() => {
+    if (deckMode === 'smart') {
+      return smartDeckCards;
     }
 
-    const pool = shuffleArray(
-      filteredCards
-        .filter((card) => card.zh !== currentCard.zh)
-        .map((card) => card.zh)
-    ).slice(0, 3);
+    if (deckMode === 'review') {
+      const dueCards = filteredCards.filter((card) => dueReviewIds.includes(card.id));
+      return dueCards.length > 0 ? dueCards : filteredCards;
+    }
 
-    return shuffleArray([currentCard.zh, ...pool]);
-  }, [currentCard, learningMode, filteredCards]);
+    if (deckMode === 'weak') {
+      const weakCards = filteredCards.filter((card) => weakWordIds.includes(card.id));
+      return weakCards.length > 0 ? weakCards : filteredCards;
+    }
+
+    return filteredCards;
+  }, [filteredCards, deckMode, dueReviewIds, weakWordIds, smartDeckCards]);
+
+  const reviewCards = useMemo(() => {
+    const reviewIds = deckMode === 'weak' ? weakWordIds : dueReviewIds;
+    if (reviewIds.length === 0) return [];
+
+    return reviewIds
+      .map((id) => filteredCards.find((card) => card.id === id))
+      .filter((card): card is DisplayCard => Boolean(card));
+  }, [filteredCards, dueReviewIds, weakWordIds, deckMode]);
+
+  const reviewCardsKey = useMemo(
+    () => reviewCards.map((card) => card.id).join('|'),
+    [reviewCards]
+  );
+
+  const reviewCardMap = useMemo(() => {
+    return new Map(reviewCards.map((card) => [card.id, card]));
+  }, [reviewCards]);
+
+  const currentReviewCard = reviewQueue.length > 0 ? reviewCardMap.get(reviewQueue[0]) ?? null : null;
+
+  useEffect(() => {
+    if (mode !== 'review') return;
+
+    const nextQueue = createReviewQueue(reviewCards.map((card) => card.id));
+    setReviewQueue(nextQueue);
+    setReviewSessionTotal(nextQueue.length);
+    setReviewDone(nextQueue.length === 0);
+  }, [mode, reviewCardsKey, reviewCards]);
+
+  useEffect(() => {
+    if (!smartFilteredCards.length) return;
+    if (index >= smartFilteredCards.length) setIndex(0);
+  }, [smartFilteredCards.length, index]);
+
+  useEffect(() => {
+    setIndex(0);
+    setReviewQueue([]);
+    setReviewSessionTotal(0);
+    setReviewDone(false);
+    resetCardView();
+  }, [learningMode, vocabularySource, mode, deckMode]);
+
+  const currentCard = smartFilteredCards[index] ?? null;
+
+  const progress = smartFilteredCards.length
+    ? Math.round(((index + 1) / smartFilteredCards.length) * 100)
+    : 0;
+  const sessionGoal = 20;
+  const sessionGoalProgress = Math.min(100, Math.round((sessionCardCount / sessionGoal) * 100));
+  const smartDeckCount = smartDeckCards.length;
+
+  function openDeck(nextDeckMode: DeckMode, nextMode: AppMode = mode) {
+    setDeckMode(nextDeckMode);
+    setMode(nextMode);
+    setIndex(0);
+    setReviewQueue([]);
+    setReviewSessionTotal(0);
+    setReviewDone(false);
+    resetCardView();
+  }
+
+  function getCardVocabSet(card?: DisplayCard | null) {
+    return card?.source ?? vocabularySource;
+  }
 
   function resetCardView() {
     setFlipped(false);
     setQuizAnswer('');
     setQuizSubmitted(false);
     setAnswerResult(null);
+    setQuizHint('');
+    setQuizHintLoading(false);
   }
 
   function nextCard() {
-    if (!filteredCards.length) return;
-    setIndex((prev) => (prev + 1) % filteredCards.length);
+    if (!smartFilteredCards.length) return;
+    setIndex((prev) => (prev + 1) % smartFilteredCards.length);
     resetCardView();
   }
 
   function prevCard() {
-    if (!filteredCards.length) return;
-    setIndex((prev) => (prev - 1 + filteredCards.length) % filteredCards.length);
+    if (!smartFilteredCards.length) return;
+    setIndex((prev) => (prev - 1 + smartFilteredCards.length) % smartFilteredCards.length);
     resetCardView();
+  }
+
+  function handleTouchStart(e: React.TouchEvent) {
+    setTouchStartX(e.changedTouches[0].clientX);
+  }
+
+  function handleTouchEnd(e: React.TouchEvent) {
+    if (touchStartX === null) return;
+    const diff = e.changedTouches[0].clientX - touchStartX;
+    if (diff > 80) prevCard();
+    if (diff < -80) nextCard();
+    setTouchStartX(null);
+  }
+
+  function handleFlashcardTap() {
+    if (!flipped) setFlipped(true);
+    else nextCard();
   }
 
   function claimTodayStudy() {
     const today = new Date().toISOString().slice(0, 10);
-    const lastStudyDate = localStorage.getItem('midea-last-study-date') || '';
 
     if (lastStudyDate === today) {
       setTodayDone(true);
-      localStorage.setItem('midea-today-done', 'true');
       return;
     }
 
@@ -503,86 +943,16 @@ export default function FlashcardApp() {
     setStreak(nextStreak);
     setBestStreak((prev) => Math.max(prev, nextStreak));
     setTodayDone(true);
+    setLastStudyDate(today);
     setShowStreakBurst(true);
-
-    localStorage.setItem('midea-last-study-date', today);
-    localStorage.setItem('midea-today-done', 'true');
 
     setTimeout(() => setShowStreakBurst(false), 1800);
   }
 
-  function resetAll() {
-    setQuery('');
-    setIndex(0);
-    setDeckSeed(0);
-    setMode('flashcards');
-    setLearningMode('thai-learns-chinese');
-    setShowSentence(true);
-    setShowImage(true);
-    setShowPinyin(true);
-    setShowThaiReading(false);
-    setShowPinyinGuide(false);
-    setQuizScore({ correct: 0, total: 0 });
-    setRankingPeriod('daily');
-    setVocabularySource('all');
-    setCombo(0);
-    resetCardView();
-
-    localStorage.setItem('midea-app-mode', 'flashcards');
-    localStorage.setItem('midea-learning-mode', 'thai');
-  }
-
-  function shuffleCards() {
-    setDeckSeed((prev) => prev + 1);
-    setIndex(0);
-    resetCardView();
-  }
-
-  function submitQuiz(answer: string) {
-    if (!currentCard || quizSubmitted) return;
-
-    const correctAnswer =
-      learningMode === 'thai-learns-chinese' ? currentCard.th : currentCard.zh;
-
-    const isCorrect = answer === correctAnswer;
-
-    setQuizAnswer(answer);
-    setQuizSubmitted(true);
-    setAnswerResult(isCorrect ? 'correct' : 'wrong');
-
-    setQuizScore((prev) => ({
-      correct: prev.correct + (isCorrect ? 1 : 0),
-      total: prev.total + 1,
-    }));
-
-    if (isCorrect) {
-      setCombo((prev) => prev + 1);
-      claimTodayStudy();
-    } else {
-      setCombo(0);
-    }
-
-    setTimeout(() => setAnswerResult(null), 1200);
-  }
-
-  async function speakBrowser(text?: string, lang = 'zh-CN') {
-    if (!text || typeof window === 'undefined') return;
-
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang;
-    utterance.rate = lang === 'th-TH' ? 0.95 : 0.92;
-    utterance.pitch = 1;
-    window.speechSynthesis.speak(utterance);
-  }
-
-  async function playTts(
-    text?: string,
-    cacheKey?: string,
-    fallbackLang = 'zh-CN'
-  ) {
+  async function handleSpeak(text?: string, lang: 'zh-CN' | 'th-TH' | 'en-US' = 'zh-CN', cacheKey?: string) {
     if (!text) return;
 
+    window.speechSynthesis?.cancel();
     const safeKey = cacheKey ?? text;
 
     try {
@@ -598,20 +968,244 @@ export default function FlashcardApp() {
 
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
-
       const audio = new Audio(url);
       audio.preload = 'auto';
-
-      await audio.play();
 
       audio.onended = () => {
         URL.revokeObjectURL(url);
         setTtsState({ key: null, loading: false });
       };
+
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        setTtsState({ key: null, loading: false });
+      };
+
+      await audio.play();
     } catch {
       setTtsState({ key: null, loading: false });
-      await speakBrowser(text, fallbackLang);
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang;
+      utterance.rate = lang === 'th-TH' ? 0.95 : 0.92;
+      utterance.pitch = 1;
+      window.speechSynthesis.speak(utterance);
     }
+  }
+
+  async function handleReviewRate(cardId: string, rating: ReviewRating) {
+    const isCorrect = rating !== 'again';
+    const ratedCard = cardById.get(cardId);
+
+    claimTodayStudy();
+
+    if (sessionUser?.id && ratedCard) {
+      await recordWordReviewRating({
+        userId: sessionUser.id,
+        cardId,
+        learningMode,
+        vocabSet: getCardVocabSet(ratedCard),
+        rating,
+      });
+    }
+
+    setSmartDeckRefreshKey((prev) => prev + 1);
+
+    if (isCorrect) {
+      const nextCombo = combo + 1;
+      setCombo(nextCombo);
+      const gainedXp = rating === 'easy' ? 20 : rating === 'hard' ? 6 : 10;
+      const nextXp = xp + gainedXp;
+      setXp(nextXp);
+      setLevel(Math.floor(nextXp / 100) + 1);
+    } else {
+      setCombo(0);
+      setLives((prev) => Math.max(prev - 1, 0));
+    }
+
+    setSessionCardCount((prev) => prev + 1);
+    setAnswerResult(isCorrect ? 'correct' : 'wrong');
+    setTimeout(() => setAnswerResult(null), 700);
+
+    setReviewQueue((prev) => {
+      const nextQueue = applyRatingToReviewQueue(prev, cardId, rating);
+      setReviewDone(nextQueue.length === 0);
+      return nextQueue;
+    });
+  }
+
+  const quizInstruction =
+    learningMode === 'thai-learns-chinese'
+      ? 'Choose the correct Thai meaning'
+      : 'Choose the correct Chinese word';
+
+  const quizPromptMain =
+    learningMode === 'thai-learns-chinese' ? currentCard?.zh : currentCard?.th;
+
+  const quizPromptSecondary =
+    learningMode === 'thai-learns-chinese'
+      ? currentCard?.pinyin
+      : showThaiReading
+      ? currentCard?.thaiPronunciation
+      : '';
+
+  const quizChoices = useMemo(() => {
+    if (!currentCard) return [];
+
+    if (learningMode === 'thai-learns-chinese') {
+      const pool = shuffleArray(
+        smartFilteredCards
+          .filter((card) => card.th !== currentCard.th)
+          .map((card) => card.th)
+      ).slice(0, 3);
+
+      return shuffleArray([currentCard.th, ...pool]);
+    }
+
+    const pool = shuffleArray(
+      smartFilteredCards
+        .filter((card) => card.zh !== currentCard.zh)
+        .map((card) => card.zh)
+    ).slice(0, 3);
+
+    return shuffleArray([currentCard.zh, ...pool]);
+  }, [currentCard, learningMode, smartFilteredCards]);
+
+  const correctAnswer =
+    learningMode === 'thai-learns-chinese' ? currentCard?.th : currentCard?.zh;
+
+  function submitQuiz(answer: string) {
+    if (!currentCard || quizSubmitted || lives === 0) return;
+
+    const isCorrect = answer === correctAnswer;
+
+    if (sessionUser?.id && currentCard) {
+      void recordWordResult({
+        userId: sessionUser.id,
+        cardId: currentCard.id,
+        learningMode,
+        vocabSet: getCardVocabSet(currentCard),
+        isCorrect,
+      }).finally(() => setSmartDeckRefreshKey((prev) => prev + 1));
+    }
+
+    setQuizAnswer(answer);
+    setQuizSubmitted(true);
+    setAnswerResult(isCorrect ? 'correct' : 'wrong');
+
+    setQuizScore((prev) => ({
+      correct: prev.correct + (isCorrect ? 1 : 0),
+      total: prev.total + 1,
+    }));
+    setSessionCardCount((prev) => prev + 1);
+    claimTodayStudy();
+
+    if (isCorrect) {
+      const nextCombo = combo + 1;
+      setCombo(nextCombo);
+      setQuizHint('');
+      setQuizHintLoading(false);
+
+      const gainedXp = nextCombo >= 3 ? 15 : 10;
+      const nextXp = xp + gainedXp;
+      setXp(nextXp);
+      setLevel(Math.floor(nextXp / 100) + 1);
+    } else {
+      setCombo(0);
+      setLives((prev) => Math.max(prev - 1, 0));
+      setQuizHint('');
+      setQuizHintLoading(true);
+
+      void generateHint({
+        zh: currentCard.zh,
+        th: currentCard.th,
+        pinyin: currentCard.pinyin,
+        category: currentCard.category,
+      })
+        .then((hint) => setQuizHint(hint))
+        .finally(() => setQuizHintLoading(false));
+    }
+
+    setTimeout(() => {
+      setAnswerResult(null);
+      nextCard();
+    }, isCorrect ? 900 : 1800);
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+
+        if (mode === 'flashcards') {
+          handleFlashcardTap();
+          return;
+        }
+
+        if (mode === 'review') {
+          return;
+        }
+
+        if (mode === 'quiz' && quizSubmitted) {
+          nextCard();
+        }
+        return;
+      }
+
+      if (mode !== 'quiz' || quizSubmitted || lives === 0) return;
+
+      const answerIndex = Number(event.key) - 1;
+      if (answerIndex >= 0 && answerIndex < quizChoices.length) {
+        event.preventDefault();
+        submitQuiz(quizChoices[answerIndex]);
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mode, quizSubmitted, lives, quizChoices, flipped]);
+
+  function resetAll() {
+    setQuery('');
+    setIndex(0);
+    setDeckSeed(0);
+    setMode('flashcards');
+    setLearningMode('thai-learns-chinese');
+    setShowSentence(true);
+    setShowImage(true);
+    setShowPinyin(true);
+    setShowThaiReading(false);
+    setShowPinyinGuide(false);
+    setQuizScore({ correct: 0, total: 0 });
+    setRankingPeriod('daily');
+    setVocabularySource('all');
+    setDeckMode('smart');
+    setCombo(0);
+    setLives(3);
+    setXp(0);
+    setLevel(1);
+    setReviewQueue([]);
+    setReviewSessionTotal(0);
+    setReviewDone(false);
+    setSessionCardCount(0);
+    resetCardView();
+
+    localStorage.setItem('midea-app-mode', 'flashcards');
+    localStorage.setItem('midea-learning-mode', 'thai');
+  }
+
+  function shuffleCards() {
+    setDeckSeed((prev) => prev + 1);
+    setIndex(0);
+    resetCardView();
   }
 
   async function saveTodayScore() {
@@ -628,8 +1222,14 @@ export default function FlashcardApp() {
     localStorage.setItem('midea-employee-code', trimmedCode);
     localStorage.setItem('midea-department', department);
 
+    updateUserSession({
+      name: trimmedName,
+      employee_code: trimmedCode,
+      department,
+    });
+
     const today = new Date().toISOString().slice(0, 10);
-    const score = quizScore.correct;
+    const score = quizScore.correct + xp;
 
     const { data: existing, error: existingError } = await supabase
       .from('daily_scores')
@@ -647,6 +1247,7 @@ export default function FlashcardApp() {
 
     if (existing && existing.length > 0) {
       const currentBest = existing[0] as LeaderboardEntry;
+
       if (score > currentBest.score) {
         await supabase
           .from('daily_scores')
@@ -673,19 +1274,30 @@ export default function FlashcardApp() {
     setTimeout(() => setSaveMessage(''), 2000);
   }
 
-  if (!currentCard) {
+  if (!currentCard && mode !== 'review') {
     return (
       <div className="w-full bg-[#F4FAFD] p-3 sm:p-4 md:p-8">
         <CardShell className="mx-auto max-w-3xl p-10 text-center">
-          <h1 className="text-2xl font-bold text-[#163047]">No vocabulary found</h1>
-          <p className="mt-3 text-slate-500">Please try another search keyword.</p>
+          <h1 className="text-2xl font-bold text-[#163047]">
+            {deckMode === 'review'
+              ? 'No review words due'
+              : deckMode === 'smart'
+              ? 'No smart recommendations yet'
+              : deckMode === 'weak'
+              ? 'No weak words yet'
+              : 'No vocabulary found'}
+          </h1>
+          <p className="mt-3 text-slate-500">
+            {deckMode === 'normal'
+              ? 'Please try another search keyword.'
+              : deckMode === 'smart'
+              ? 'Study a few cards first so the system can prioritize your next best words.'
+              : 'Switch back to Normal deck or continue studying to generate review data.'}
+          </p>
         </CardShell>
       </div>
     );
   }
-
-  const correctAnswer =
-    learningMode === 'thai-learns-chinese' ? currentCard.th : currentCard.zh;
 
   return (
     <div className="w-full bg-[#F4FAFD] p-3 sm:p-4 md:p-8">
@@ -742,7 +1354,7 @@ export default function FlashcardApp() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-7">
                 {[
                   [
                     'Vocabulary Set',
@@ -752,12 +1364,18 @@ export default function FlashcardApp() {
                       ? 'HSK4'
                       : 'Factory',
                   ],
-                  ['Total Vocabulary', filteredCards.length],
-                  ['Current Card', `${index + 1}/${filteredCards.length}`],
+                  ['Total Vocabulary', smartFilteredCards.length],
+                  [
+                    'Current Card',
+                    `${Math.min(index + 1, Math.max(smartFilteredCards.length, 1))}/${smartFilteredCards.length}`,
+                  ],
                   ['Completion', `${progress}%`],
+                  ['Session Goal', `${Math.min(sessionCardCount, sessionGoal)}/${sessionGoal}`],
+                  ['XP', xp],
+                  ['Level', level],
                 ].map(([label, value]) => (
                   <div
-                    key={label}
+                    key={String(label)}
                     className="rounded-2xl border border-white/25 bg-white/15 p-4 backdrop-blur"
                   >
                     <p className="text-xs text-white/80 sm:text-sm">{label}</p>
@@ -769,6 +1387,13 @@ export default function FlashcardApp() {
           </div>
         </CardShell>
 
+        {showManagerDashboard &&
+          (sessionUser?.role === 'manager' || sessionUser?.role === 'admin') && (
+            <div className="mb-6">
+              <ManagerDashboard sessionUser={sessionUser} />
+            </div>
+          )}
+
         {showStreakBurst && (
           <motion.div
             initial={{ opacity: 0, y: -10, scale: 0.95 }}
@@ -778,7 +1403,7 @@ export default function FlashcardApp() {
           >
             <div className="flex items-center justify-center gap-2 font-semibold">
               <Sparkles className="h-4 w-4" />
-              Streak updated! Keep going 🔥
+              Streak updated! Keep going {'\u{1F525}'}
             </div>
           </motion.div>
         )}
@@ -786,91 +1411,165 @@ export default function FlashcardApp() {
         <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
           <CardShell className="border-[#D9E7F0] bg-white">
             <div className="space-y-4 p-5">
-              <div className="flex gap-2">
-                <button
-                  className={cn(
-                    'h-11 flex-1 rounded-full border text-sm font-medium',
-                    mode === 'flashcards'
-                      ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                      : 'border-[#D9E7F0] bg-white text-[#163047]'
-                  )}
-                  onClick={() => {
-                    setMode('flashcards');
-                    localStorage.setItem('midea-app-mode', 'flashcards');
-                    resetCardView();
-                  }}
-                >
-                  Flashcards
-                </button>
+              <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-rose-500">
+                    {[1, 2, 3].map((heart) => (
+                      <Heart
+                        key={heart}
+                        className={cn('h-5 w-5', heart <= lives ? 'fill-current' : 'opacity-25')}
+                      />
+                    ))}
+                  </div>
 
-                <button
-                  className={cn(
-                    'h-11 flex-1 rounded-full border text-sm font-medium',
-                    mode === 'quiz'
-                      ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                      : 'border-[#D9E7F0] bg-white text-[#163047]'
-                  )}
-                  onClick={() => {
-                    setMode('quiz');
-                    localStorage.setItem('midea-app-mode', 'quiz');
-                    resetCardView();
-                  }}
-                >
-                  Quiz
-                </button>
+                  <div className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#163047]">
+                    XP {xp} | Lv.{level}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                {(
+                  [
+                    { key: 'flashcards', label: 'Cards' },
+                    { key: 'quiz', label: 'Quiz' },
+                    {
+                      key: 'review',
+                      label: `Review${dueReviewIds.length > 0 ? ` (${dueReviewIds.length})` : ''}`,
+                    },
+                  ] as { key: AppMode; label: string }[]
+                ).map((m) => (
+                  <button
+                    key={m.key}
+                    className={cn(
+                      'h-11 flex-1 rounded-full border text-xs font-medium',
+                      mode === m.key
+                        ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
+                        : 'border-[#D9E7F0] bg-white text-[#163047]'
+                    )}
+                    onClick={() => {
+                      setMode(m.key);
+                      localStorage.setItem('midea-app-mode', m.key);
+                      setReviewQueue([]);
+                      setReviewSessionTotal(0);
+                      setReviewDone(false);
+                      resetCardView();
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
               </div>
 
               <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
                 <p className="mb-3 text-sm font-semibold text-[#163047]">Vocabulary Set</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['all', 'hsk4', 'factory'] as VocabSet[]).map((source) => (
+                    <button
+                      key={source}
+                      onClick={() => {
+                        setVocabularySource(source);
+                        setIndex(0);
+                        resetCardView();
+                      }}
+                      className={cn(
+                        'rounded-xl border px-3 py-2 text-sm font-medium',
+                        vocabularySource === source
+                          ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
+                          : 'border-[#D9E7F0] bg-white text-[#163047]'
+                      )}
+                    >
+                      {source === 'all' ? 'All' : source === 'hsk4' ? 'HSK4' : 'Factory'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
+                <p className="mb-3 text-sm font-semibold text-[#163047]">Study Deck</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { key: 'smart', label: `Smart (${smartDeckCount})` },
+                    { key: 'normal', label: 'Normal' },
+                    { key: 'review', label: `Review (${dueReviewIds.length})` },
+                    { key: 'weak', label: `Weak (${weakWordIds.length})` },
+                  ].map((item) => (
+                    <button
+                      key={item.key}
+                      onClick={() =>
+                        openDeck(
+                          item.key as DeckMode,
+                          item.key === 'review' ? 'review' : 'flashcards'
+                        )
+                      }
+                      className={cn(
+                        'rounded-xl border px-3 py-2 text-xs font-medium',
+                        deckMode === item.key
+                          ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
+                          : 'border-[#D9E7F0] bg-white text-[#163047]'
+                      )}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-[#D9E7F0] bg-white p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-[#163047]">Today&apos;s Focus</p>
+                    <p className="text-xs text-[#6B7C8F]">
+                      Smart queue mixes due review, weak words, and new items.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[#F4FAFD] px-3 py-1 text-xs font-semibold text-[#2EA7E0]">
+                    {recommendationLoading ? 'Syncing...' : `${smartDeckCount} cards`}
+                  </span>
+                </div>
 
                 <div className="grid grid-cols-3 gap-2">
-                  <button
-                    onClick={() => {
-                      setVocabularySource('all');
-                      setIndex(0);
-                      resetCardView();
-                    }}
-                    className={cn(
-                      'rounded-xl border px-3 py-2 text-sm font-medium',
-                      vocabularySource === 'all'
-                        ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                        : 'border-[#D9E7F0] bg-white text-[#163047]'
-                    )}
-                  >
-                    All
-                  </button>
+                  <div className="rounded-xl bg-[#F8FCFE] p-3 text-center">
+                    <p className="text-[11px] text-[#6B7C8F]">Due</p>
+                    <p className="mt-1 text-lg font-bold text-[#163047]">
+                      {recommendationSummary.review}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-[#F8FCFE] p-3 text-center">
+                    <p className="text-[11px] text-[#6B7C8F]">Weak</p>
+                    <p className="mt-1 text-lg font-bold text-[#163047]">
+                      {recommendationSummary.weak + recommendationSummary.low_accuracy}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-[#F8FCFE] p-3 text-center">
+                    <p className="text-[11px] text-[#6B7C8F]">New</p>
+                    <p className="mt-1 text-lg font-bold text-[#163047]">
+                      {recommendationSummary.new}
+                    </p>
+                  </div>
+                </div>
 
+                <div className="mt-3 grid gap-2">
                   <button
-                    onClick={() => {
-                      setVocabularySource('hsk4');
-                      setIndex(0);
-                      resetCardView();
-                    }}
-                    className={cn(
-                      'rounded-xl border px-3 py-2 text-sm font-medium',
-                      vocabularySource === 'hsk4'
-                        ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                        : 'border-[#D9E7F0] bg-white text-[#163047]'
-                    )}
+                    onClick={() => openDeck('smart', 'flashcards')}
+                    className="h-11 rounded-2xl bg-[#2EA7E0] px-4 text-sm font-semibold text-white hover:bg-[#1D8FC7]"
                   >
-                    HSK4
+                    Start Smart Session
                   </button>
-
-                  <button
-                    onClick={() => {
-                      setVocabularySource('factory');
-                      setIndex(0);
-                      resetCardView();
-                    }}
-                    className={cn(
-                      'rounded-xl border px-3 py-2 text-sm font-medium',
-                      vocabularySource === 'factory'
-                        ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                        : 'border-[#D9E7F0] bg-white text-[#163047]'
-                    )}
-                  >
-                    Factory
-                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => openDeck('review', 'review')}
+                      className="h-11 rounded-2xl border border-[#D9E7F0] bg-white px-4 text-sm font-medium text-[#163047]"
+                    >
+                      Review Due
+                    </button>
+                    <button
+                      onClick={() => openDeck('weak', 'review')}
+                      className="h-11 rounded-2xl border border-[#D9E7F0] bg-white px-4 text-sm font-medium text-[#163047]"
+                    >
+                      Weak Rescue
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -888,7 +1587,7 @@ export default function FlashcardApp() {
 
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
                   <div className="flex items-center gap-2 text-amber-700">
-                    <Sparkles className="h-4 w-4" />
+                    <Star className="h-4 w-4" />
                     <span className="text-sm font-medium">Best / Combo</span>
                   </div>
                   <div className="mt-2 text-2xl font-bold text-amber-800">
@@ -954,16 +1653,20 @@ export default function FlashcardApp() {
                   <p className="mb-3 text-sm font-semibold text-[#163047]">Pinyin Tone Guide</p>
                   <div className="grid gap-2 text-sm text-slate-700">
                     <div className="rounded-xl bg-[#F8FCFE] p-3">
-                      <span className="font-semibold">Tone 1:</span> ā ē ī ō ū ǖ
+                      <span className="font-semibold">Tone 1:</span>{' '}
+                      {'\u0101 \u0113 \u012b \u014d \u016b \u01d6'}
                     </div>
                     <div className="rounded-xl bg-[#F8FCFE] p-3">
-                      <span className="font-semibold">Tone 2:</span> á é í ó ú ǘ
+                      <span className="font-semibold">Tone 2:</span>{' '}
+                      {'\u00e1 \u00e9 \u00ed \u00f3 \u00fa \u01d8'}
                     </div>
                     <div className="rounded-xl bg-[#F8FCFE] p-3">
-                      <span className="font-semibold">Tone 3:</span> ǎ ě ǐ ǒ ǔ ǚ
+                      <span className="font-semibold">Tone 3:</span>{' '}
+                      {'\u01ce \u011b \u01d0 \u01d2 \u01d4 \u01da'}
                     </div>
                     <div className="rounded-xl bg-[#F8FCFE] p-3">
-                      <span className="font-semibold">Tone 4:</span> à è ì ò ù ǜ
+                      <span className="font-semibold">Tone 4:</span>{' '}
+                      {'\u00e0 \u00e8 \u00ec \u00f2 \u00f9 \u01dc'}
                     </div>
                   </div>
                 </div>
@@ -981,7 +1684,7 @@ export default function FlashcardApp() {
                       resetCardView();
                     }}
                     placeholder="Search Chinese / Thai / Pinyin"
-                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] pl-9 pr-3 text-base outline-none"
+                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] bg-white pl-9 pr-3 text-base text-[#163047] outline-none placeholder:text-[#9BAABA]"
                   />
                 </div>
               </div>
@@ -1016,6 +1719,20 @@ export default function FlashcardApp() {
                     transition={{ duration: 0.35 }}
                   />
                 </div>
+
+                <div className="mt-4 flex justify-between text-sm text-[#6B7C8F]">
+                  <span>Daily Goal</span>
+                  <span>
+                    {Math.min(sessionCardCount, sessionGoal)}/{sessionGoal}
+                  </span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-[#D9E7F0]">
+                  <motion.div
+                    className="h-full rounded-full bg-gradient-to-r from-[#FDBA74] to-[#F97316]"
+                    animate={{ width: `${sessionGoalProgress}%` }}
+                    transition={{ duration: 0.35 }}
+                  />
+                </div>
               </div>
 
               <div className="rounded-2xl border border-[#D9E7F0] bg-white p-4">
@@ -1029,20 +1746,20 @@ export default function FlashcardApp() {
                     value={playerName}
                     onChange={(e) => setPlayerName(e.target.value)}
                     placeholder="Learner Name"
-                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] px-3 outline-none"
+                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] bg-white px-3 text-[#163047] outline-none placeholder:text-[#9BAABA]"
                   />
 
                   <input
                     value={employeeCode}
                     onChange={(e) => setEmployeeCode(e.target.value)}
                     placeholder="Employee ID"
-                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] px-3 outline-none"
+                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] bg-white px-3 text-[#163047] outline-none placeholder:text-[#9BAABA]"
                   />
 
                   <select
                     value={department}
                     onChange={(e) => setDepartment(e.target.value)}
-                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] px-3 outline-none"
+                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] bg-white px-3 text-[#163047] outline-none"
                   >
                     {DEPARTMENTS.map((item) => (
                       <option key={item} value={item}>
@@ -1066,6 +1783,8 @@ export default function FlashcardApp() {
                   </button>
                 </div>
               </div>
+
+              <AnalyticsPanel metrics={userMetrics} loading={metricsLoading} />
 
               <div className="rounded-2xl border border-[#D9E7F0] bg-white p-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
@@ -1113,6 +1832,21 @@ export default function FlashcardApp() {
                   Active players: <span className="font-semibold">{playerCount}</span>
                 </div>
 
+                {(sessionUser?.role === 'manager' || sessionUser?.role === 'admin') && (
+                  <button
+                    onClick={() => setShowManagerDashboard((v) => !v)}
+                    className={cn(
+                      'mb-3 flex h-11 w-full items-center justify-center gap-2 rounded-2xl border text-sm font-medium',
+                      showManagerDashboard
+                        ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
+                        : 'border-[#D9E7F0] bg-white text-[#163047]'
+                    )}
+                  >
+                    <Shield className="h-4 w-4" />
+                    {showManagerDashboard ? 'Hide Dashboard' : 'Manager Dashboard'}
+                  </button>
+                )}
+
                 <button
                   onClick={() => void saveTodayScore()}
                   className="mb-3 h-11 w-full rounded-2xl bg-[#2EA7E0] px-4 font-medium text-white hover:bg-[#1D8FC7]"
@@ -1151,7 +1885,7 @@ export default function FlashcardApp() {
 
                         <div className="mt-1 pl-8 text-xs text-[#6B7C8F]">
                           {(p.department || 'No department') +
-                            (p.employee_code ? ` · ${p.employee_code}` : '')}
+                            (p.employee_code ? ` | ${p.employee_code}` : '')}
                         </div>
                       </div>
                     ))}
@@ -1162,8 +1896,39 @@ export default function FlashcardApp() {
           </CardShell>
 
           <div className="space-y-4">
-            <AnimatePresence mode="wait">
-              {answerResult && mode === 'quiz' && (
+            <div className="mx-auto max-w-4xl rounded-2xl border border-[#D9E7F0] bg-white px-4 py-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm text-[#6B7C8F]">
+                <span>
+                  {deckMode === 'smart'
+                    ? 'Smart session'
+                    : deckMode === 'review'
+                    ? 'Review deck'
+                    : deckMode === 'weak'
+                    ? 'Weak deck'
+                    : 'Normal deck'}
+                </span>
+                <span>
+                  Card {Math.min(index + 1, Math.max(smartFilteredCards.length, 1))} /{' '}
+                  {smartFilteredCards.length || 1}
+                </span>
+              </div>
+
+              <div className="h-3 overflow-hidden rounded-full bg-[#D9E7F0]">
+                <motion.div
+                  className="h-full rounded-full bg-gradient-to-r from-[#2EA7E0] to-[#1D8FC7]"
+                  animate={{ width: `${progress}%` }}
+                  transition={{ duration: 0.35 }}
+                />
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#6B7C8F]">
+                <span>Session goal {Math.min(sessionCardCount, sessionGoal)} / {sessionGoal}</span>
+                <span>Due {dueReviewIds.length} | Weak {weakWordIds.length} | Smart {smartDeckCount}</span>
+              </div>
+            </div>
+
+            <AnimatePresence>
+              {answerResult ? (
                 <motion.div
                   key={answerResult}
                   initial={{ opacity: 0, y: -10, scale: 0.96 }}
@@ -1178,568 +1943,144 @@ export default function FlashcardApp() {
                 >
                   {answerResult === 'correct'
                     ? `Correct! Combo x${combo || 1}`
-                    : 'Incorrect — try the next one'}
+                    : 'Incorrect - try the next one'}
                 </motion.div>
-              )}
-
-              {mode === 'flashcards' ? (
-                <motion.div
-                  key={`${currentCard.id}-${flipped}-${learningMode}`}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -12 }}
-                >
-                  <div className="mx-auto w-full max-w-4xl [perspective:1200px]">
-                    <motion.div
-                      className="relative h-[620px] w-full cursor-pointer touch-manipulation"
-                      animate={{ rotateY: flipped ? 180 : 0 }}
-                      transition={{ duration: 0.5 }}
-                      style={{ transformStyle: 'preserve-3d' }}
-                      onClick={() => setFlipped((v) => !v)}
-                    >
-                      <CardShell
-                        className="absolute inset-0 overflow-hidden border-0 bg-gradient-to-br from-slate-900 via-blue-900 to-cyan-800 text-white"
-                        style={{ backfaceVisibility: 'hidden' }}
-                      >
-                        <div className="flex h-full flex-col justify-between p-6 md:p-8">
-                          <div className="flex items-center justify-between">
-                            <span className="rounded-full bg-white/15 px-3 py-1 text-sm">
-                              {currentCard.category}
-                            </span>
-                            {showImage && (
-                              <span className="text-5xl">{currentCard.image || ' '}</span>
-                            )}
-                          </div>
-
-                          <div className="space-y-5 text-center">
-                            <p className="text-sm uppercase tracking-[0.25em] text-white/75">
-                              {learningMode === 'thai-learns-chinese' ? 'Chinese' : 'Thai'}
-                            </p>
-
-                            <div className="flex items-center justify-center gap-3">
-                              <h2 className="text-4xl font-bold sm:text-5xl md:text-6xl">
-                                {learningMode === 'thai-learns-chinese'
-                                  ? currentCard.zh
-                                  : currentCard.th}
-                              </h2>
-
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  unlockAudio();
-                                  void playTts(
-                                    learningMode === 'thai-learns-chinese'
-                                      ? currentCard.zh
-                                      : currentCard.th,
-                                    `front-${learningMode}-${currentCard.id}`,
-                                    learningMode === 'thai-learns-chinese' ? 'zh-CN' : 'th-TH'
-                                  );
-                                }}
-                                className="rounded-full bg-white/15 p-3 text-white hover:bg-white/25"
-                              >
-                                <Volume2 className="h-5 w-5" />
-                              </button>
-                            </div>
-
-                            {learningMode === 'thai-learns-chinese' ? (
-                              <>
-                                {showPinyin && (
-                                  <div className="text-lg md:text-xl">
-                                    {renderPinyinWithToneColor(currentCard.pinyin)}
-                                  </div>
-                                )}
-                                {showThaiReading && currentCard.thaiPronunciation && (
-                                  <p className="text-base text-white/85">
-                                    {currentCard.thaiPronunciation}
-                                  </p>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                {showThaiReading && currentCard.thaiPronunciation && (
-                                  <p className="text-base text-white/85">
-                                    {currentCard.thaiPronunciation}
-                                  </p>
-                                )}
-                                {showPinyin && (
-                                  <div className="text-base md:text-lg text-white/85">
-                                    {currentCard.zh}
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </div>
-
-                          <div className="text-center text-sm text-white/75">
-                            {ttsState.loading &&
-                            ttsState.key === `front-${learningMode}-${currentCard.id}`
-                              ? 'Playing audio...'
-                              : 'Tap card to flip'}
-                          </div>
-                        </div>
-                      </CardShell>
-
-                      <CardShell
-                        className="absolute inset-0 overflow-hidden bg-white"
-                        style={{
-                          transform: 'rotateY(180deg)',
-                          backfaceVisibility: 'hidden',
-                        }}
-                      >
-                        <div className="flex h-full flex-col justify-between p-6 md:p-8">
-                          <div className="flex items-center justify-between">
-                            <span className="rounded-full bg-[#F4FAFD] px-3 py-1 text-sm text-[#163047]">
-                              {currentCard.category}
-                            </span>
-                            {showImage && (
-                              <span className="text-4xl">
-                                <ImageIcon className="mr-1 inline h-5 w-5" />
-                                {currentCard.image || ' '}
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="space-y-5 text-center">
-                            <p className="text-sm uppercase tracking-[0.2em] text-[#6B7C8F]">
-                              {learningMode === 'thai-learns-chinese'
-                                ? 'Pinyin'
-                                : 'Chinese Meaning'}
-                            </p>
-
-                            {learningMode === 'thai-learns-chinese' ? (
-                              <>
-                                <div className="flex items-center justify-center gap-3">
-                                  <h3 className="text-3xl font-bold text-[#163047] md:text-4xl">
-                                    {currentCard.pinyin || '-'}
-                                  </h3>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      unlockAudio();
-                                      void playTts(
-                                        currentCard.zh,
-                                        `back-pinyin-${currentCard.id}`,
-                                        'zh-CN'
-                                      );
-                                    }}
-                                    className="rounded-full bg-[#F4FAFD] p-3 hover:bg-[#EAF7FD]"
-                                  >
-                                    <Volume2 className="h-5 w-5 text-[#1D8FC7]" />
-                                  </button>
-                                </div>
-
-                                <div className="space-y-2 rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4 text-left">
-                                  <p className="text-sm text-[#6B7C8F]">Thai Meaning</p>
-                                  <div className="flex items-center gap-3">
-                                    <p className="text-xl font-semibold text-[#163047]">
-                                      {currentCard.th}
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        unlockAudio();
-                                        void playTts(
-                                          currentCard.th,
-                                          `back-thai-${currentCard.id}`,
-                                          'th-TH'
-                                        );
-                                      }}
-                                      className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
-                                    >
-                                      <Volume2 className="h-4 w-4 text-[#1D8FC7]" />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {showSentence && (
-                                  <div className="space-y-2 rounded-2xl border border-[#D9E7F0] bg-[#F4FAFD] p-4 text-left">
-                                    <p className="text-sm font-medium text-[#6B7C8F]">
-                                      Example Sentence
-                                    </p>
-
-                                    <div className="flex items-start justify-between gap-3">
-                                      <p className="text-lg text-[#163047]">
-                                        {currentCard.sentenceTh}
-                                      </p>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          unlockAudio();
-                                          void playTts(
-                                            currentCard.sentenceTh,
-                                            `sentence-th-${currentCard.id}`,
-                                            'th-TH'
-                                          );
-                                        }}
-                                        className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
-                                      >
-                                        <Volume2 className="h-4 w-4 text-[#1D8FC7]" />
-                                      </button>
-                                    </div>
-
-                                    <div className="flex items-start justify-between gap-3">
-                                      <p className="text-sm sm:text-base text-[#163047]">
-                                        {currentCard.sentenceEn || '-'}
-                                      </p>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          unlockAudio();
-                                          void playTts(
-                                            currentCard.sentenceEn || '',
-                                            `sentence-en-${currentCard.id}`,
-                                            'en-US'
-                                          );
-                                        }}
-                                        className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
-                                      >
-                                        <Volume2 className="h-4 w-4 text-[#1D8FC7]" />
-                                      </button>
-                                    </div>
-
-                                    <div className="flex items-start justify-between gap-3">
-                                      <p className="text-sm text-[#1D8FC7] sm:text-base">
-                                        {currentCard.sentenceZh}
-                                      </p>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          unlockAudio();
-                                          void playTts(
-                                            currentCard.sentenceZh,
-                                            `sentence-zh-${currentCard.id}`,
-                                            'zh-CN'
-                                          );
-                                        }}
-                                        className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
-                                      >
-                                        <Volume2 className="h-4 w-4 text-[#1D8FC7]" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <div className="flex items-center justify-center gap-3">
-                                  <h3 className="text-3xl font-bold text-[#163047] md:text-4xl">
-                                    {currentCard.zh}
-                                  </h3>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      unlockAudio();
-                                      void playTts(
-                                        currentCard.zh,
-                                        `back-cn-${currentCard.id}`,
-                                        'zh-CN'
-                                      );
-                                    }}
-                                    className="rounded-full bg-[#F4FAFD] p-3 hover:bg-[#EAF7FD]"
-                                  >
-                                    <Volume2 className="h-5 w-5 text-[#1D8FC7]" />
-                                  </button>
-                                </div>
-
-                                {showPinyin && (
-                                  <div className="text-base">
-                                    {renderPinyinWithToneColorLight(currentCard.pinyin)}
-                                  </div>
-                                )}
-
-                                <div className="space-y-2 rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4 text-left">
-                                  <p className="text-sm text-[#6B7C8F]">Thai</p>
-                                  <div className="flex items-center gap-3">
-                                    <p className="text-xl font-semibold text-[#163047]">
-                                      {currentCard.th}
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        unlockAudio();
-                                        void playTts(
-                                          currentCard.th,
-                                          `back-th-${currentCard.id}`,
-                                          'th-TH'
-                                        );
-                                      }}
-                                      className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
-                                    >
-                                      <Volume2 className="h-4 w-4 text-[#1D8FC7]" />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {showSentence && (
-                                  <div className="space-y-2 rounded-2xl border border-[#D9E7F0] bg-[#F4FAFD] p-4 text-left">
-                                    <p className="text-sm font-medium text-[#6B7C8F]">
-                                      Example Sentence
-                                    </p>
-
-                                    <div className="flex items-start justify-between gap-3">
-                                      <p className="text-lg text-[#163047]">
-                                        {currentCard.sentenceTh}
-                                      </p>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          unlockAudio();
-                                          void playTts(
-                                            currentCard.sentenceTh,
-                                            `sentence-th-front-${currentCard.id}`,
-                                            'th-TH'
-                                          );
-                                        }}
-                                        className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
-                                      >
-                                        <Volume2 className="h-4 w-4 text-[#1D8FC7]" />
-                                      </button>
-                                    </div>
-
-                                    <div className="flex items-start justify-between gap-3">
-                                      <p className="text-sm text-[#1D8FC7] sm:text-base">
-                                        {currentCard.sentenceZh}
-                                      </p>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          unlockAudio();
-                                          void playTts(
-                                            currentCard.sentenceZh,
-                                            `sentence-cn-back-${currentCard.id}`,
-                                            'zh-CN'
-                                          );
-                                        }}
-                                        className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
-                                      >
-                                        <Volume2 className="h-4 w-4 text-[#1D8FC7]" />
-                                      </button>
-                                    </div>
-
-                                    {showPinyin && currentCard.sentencePinyin && (
-                                      <div className="text-sm sm:text-base">
-                                        {renderPinyinWithToneColorLight(
-                                          currentCard.sentencePinyin
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </div>
-
-                          <p className="text-center text-sm text-[#6B7C8F]">
-                            Tap card to flip back
-                          </p>
-                        </div>
-                      </CardShell>
-                    </motion.div>
-                  </div>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key={`${currentCard.id}-${quizSubmitted}-${learningMode}`}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -12 }}
-                >
-                  <CardShell className="mx-auto max-w-4xl overflow-hidden border-[#D9E7F0] bg-white">
-                    <div className="space-y-5 p-5 md:p-10">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <span className="rounded-full bg-[#F4FAFD] px-3 py-1 text-sm text-[#163047]">
-                          {currentCard.category}
-                        </span>
-                        <div className="flex items-center gap-2 text-sm text-[#6B7C8F]">
-                          <BookOpen className="h-4 w-4" />
-                          {learningMode === 'thai-learns-chinese'
-                            ? 'Choose the correct Thai meaning'
-                            : 'Choose the correct Chinese word'}
-                        </div>
-                      </div>
-
-                      <div className="space-y-4 py-4 text-center">
-                        {showImage && <div className="text-5xl">{currentCard.image || ' '}</div>}
-
-                        <div className="flex items-center justify-center gap-3">
-                          <h2 className="text-3xl font-bold leading-tight text-[#163047] sm:text-4xl md:text-5xl">
-                            {learningMode === 'thai-learns-chinese'
-                              ? currentCard.zh
-                              : currentCard.th}
-                          </h2>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              unlockAudio();
-                              void playTts(
-                                learningMode === 'thai-learns-chinese'
-                                  ? currentCard.zh
-                                  : currentCard.th,
-                                `quiz-main-${learningMode}-${currentCard.id}`,
-                                learningMode === 'thai-learns-chinese'
-                                  ? 'zh-CN'
-                                  : 'th-TH'
-                              );
-                            }}
-                            className="rounded-full bg-[#F4FAFD] p-3 hover:bg-[#EAF7FD]"
-                          >
-                            <Volume2 className="h-5 w-5 text-[#1D8FC7]" />
-                          </button>
-                        </div>
-
-                        {learningMode === 'thai-learns-chinese' ? (
-                          <>
-                            {showPinyin && (
-                              <div className="text-base sm:text-lg md:text-xl">
-                                {renderPinyinWithToneColorLight(currentCard.pinyin)}
-                              </div>
-                            )}
-                            {showThaiReading && currentCard.thaiPronunciation && (
-                              <p className="text-base text-[#6B7C8F] sm:text-lg">
-                                {currentCard.thaiPronunciation}
-                              </p>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            {showThaiReading && currentCard.thaiPronunciation && (
-                              <p className="text-base text-[#6B7C8F] sm:text-lg">
-                                {currentCard.thaiPronunciation}
-                              </p>
-                            )}
-                          </>
-                        )}
-
-                        {showSentence && (
-                          <div className="mx-auto max-w-2xl rounded-2xl bg-[#F8FCFE] p-4 text-left text-sm text-[#163047] sm:text-base">
-                            <div className="mb-2 flex items-start justify-between gap-3">
-                              <p>
-                                {learningMode === 'thai-learns-chinese'
-                                  ? currentCard.sentenceZh
-                                  : currentCard.sentenceTh}
-                              </p>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  unlockAudio();
-                                  void playTts(
-                                    learningMode === 'thai-learns-chinese'
-                                      ? currentCard.sentenceZh
-                                      : currentCard.sentenceTh,
-                                    `quiz-sentence-${learningMode}-${currentCard.id}`,
-                                    learningMode === 'thai-learns-chinese'
-                                      ? 'zh-CN'
-                                      : 'th-TH'
-                                  );
-                                }}
-                                className="rounded-full bg-white p-2 shadow-sm hover:bg-[#EAF7FD]"
-                              >
-                                <Volume2 className="h-4 w-4 text-[#1D8FC7]" />
-                              </button>
-                            </div>
-
-                            {learningMode === 'thai-learns-chinese' ? (
-                              showPinyin && (
-                                <div className="mt-2">
-                                  {renderPinyinWithToneColorLight(currentCard.sentencePinyin)}
-                                </div>
-                              )
-                            ) : (
-                              showThaiReading &&
-                              currentCard.sentenceThaiPronunciation && (
-                                <p className="mt-2 text-[#6B7C8F]">
-                                  {currentCard.sentenceThaiPronunciation}
-                                </p>
-                              )
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="grid gap-3">
-                        {quizChoices.map((choice) => {
-                          const isCorrectChoice = choice === correctAnswer;
-                          const isSelected = quizAnswer === choice;
-
-                          return (
-                            <motion.button
-                              key={choice}
-                              whileTap={{ scale: 0.98 }}
-                              className={cn(
-                                'min-h-[56px] rounded-2xl border px-4 py-4 text-left text-sm sm:px-5 sm:text-base',
-                                quizSubmitted &&
-                                  isCorrectChoice &&
-                                  'border-emerald-500 bg-emerald-50',
-                                quizSubmitted &&
-                                  isSelected &&
-                                  !isCorrectChoice &&
-                                  'border-rose-500 bg-rose-50',
-                                !quizSubmitted &&
-                                  'border-[#D9E7F0] bg-white text-[#163047]'
-                              )}
-                              onClick={() => submitQuiz(choice)}
-                              disabled={quizSubmitted}
-                            >
-                              {choice}
-                            </motion.button>
-                          );
-                        })}
-                      </div>
-
-                      {quizSubmitted && (
-                        <div
-                          className={cn(
-                            'rounded-2xl border p-4',
-                            quizAnswer === correctAnswer
-                              ? 'border-emerald-300 bg-emerald-50'
-                              : 'border-rose-300 bg-rose-50'
-                          )}
-                        >
-                          <div className="flex items-center gap-2 font-semibold text-[#163047]">
-                            <BadgeCheck className="h-4 w-4" />
-                            {quizAnswer === correctAnswer ? 'Correct' : 'Incorrect'}
-                          </div>
-                          <p className="mt-1 text-[#6B7C8F]">
-                            Correct answer: {correctAnswer}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </CardShell>
-                </motion.div>
-              )}
+              ) : null}
             </AnimatePresence>
 
-            <div className="flex items-center justify-center gap-3">
-              <button
-                onClick={prevCard}
-                className="min-w-[160px] rounded-2xl border border-[#D9E7F0] bg-white px-6 py-4 text-lg font-semibold text-[#163047]"
-              >
-                Previous
-              </button>
-              <button
-                onClick={nextCard}
-                className="min-w-[160px] rounded-2xl bg-[#2EA7E0] px-6 py-4 text-lg font-semibold text-white hover:bg-[#1D8FC7]"
-              >
-                Next
-              </button>
-            </div>
+            <AnimatePresence mode="wait">
+              {mode === 'review' ? (
+                reviewDone || !currentReviewCard ? (
+                  <motion.div
+                    key="review-done"
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                  >
+                    <ReviewComplete
+                      total={reviewSessionTotal}
+                      onReset={() => {
+                        setMode('flashcards');
+                        setReviewQueue([]);
+                        setReviewSessionTotal(0);
+                        setReviewDone(false);
+                        resetCardView();
+                      }}
+                    />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key={`review-${currentReviewCard.id}-${sessionCardCount}`}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -12 }}
+                  >
+                    <ReviewPanel
+                      card={currentReviewCard}
+                      cardIndex={Math.max(0, reviewSessionTotal - reviewQueue.length)}
+                      totalCards={Math.max(reviewSessionTotal, reviewQueue.length)}
+                      remainingCards={reviewQueue.length}
+                      learningMode={learningMode}
+                      showPinyin={showPinyin}
+                      showThaiReading={showThaiReading}
+                      showSentence={showSentence}
+                      onRate={(cardId, rating) => void handleReviewRate(cardId, rating)}
+                      onSpeak={handleSpeak}
+                    />
+                  </motion.div>
+                )
+              ) : null}
+
+              {mode === 'flashcards' && currentCard ? (
+                <FlashcardView
+                  card={currentCard}
+                  flipped={flipped}
+                  learningMode={learningMode}
+                  showImage={showImage}
+                  showPinyin={showPinyin}
+                  showThaiReading={showThaiReading}
+                  showSentence={showSentence}
+                  ttsLoading={ttsState.loading}
+                  ttsKey={ttsState.key}
+                  onCardTap={handleFlashcardTap}
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={handleTouchEnd}
+                  onSpeak={handleSpeak}
+                  renderPinyin={renderPinyinWithToneColor}
+                  renderPinyinLight={renderPinyinWithToneColorLight}
+                />
+              ) : null}
+
+              {mode === 'quiz' && currentCard ? (
+                <QuizView
+                  card={currentCard}
+                  learningMode={learningMode}
+                  showImage={showImage}
+                  showSentence={showSentence}
+                  showPinyin={showPinyin}
+                  showThaiReading={showThaiReading}
+                  lives={lives}
+                  xp={xp}
+                  level={level}
+                  quizInstruction={quizInstruction}
+                  quizPromptMain={quizPromptMain}
+                  quizPromptSecondary={quizPromptSecondary}
+                  quizChoices={quizChoices}
+                  correctAnswer={correctAnswer}
+                  quizAnswer={quizAnswer}
+                  quizSubmitted={quizSubmitted}
+                  combo={combo}
+                  hint={quizHint}
+                  hintLoading={quizHintLoading}
+                  onRetry={() => {
+                    setLives(3);
+                    setCombo(0);
+                  }}
+                  onSubmit={submitQuiz}
+                  onSpeak={handleSpeak}
+                  renderPinyinLight={renderPinyinWithToneColorLight}
+                />
+              ) : null}
+            </AnimatePresence>
+
+            {mode !== 'review' && currentCard ? (
+              <SpeakingPracticePanel
+                card={currentCard}
+                learningMode={learningMode}
+                showSentence={showSentence}
+                showPinyin={showPinyin}
+                showThaiReading={showThaiReading}
+                onSpeak={handleSpeak}
+              />
+            ) : null}
+
+            {mode !== 'review' && (
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={prevCard}
+                  className="min-w-[160px] rounded-2xl border border-[#D9E7F0] bg-white px-6 py-4 text-lg font-semibold text-[#163047]"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={nextCard}
+                  className="min-w-[160px] rounded-2xl bg-[#2EA7E0] px-6 py-4 text-lg font-semibold text-white hover:bg-[#1D8FC7]"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+
+            {mode === 'review' && (
+              <div className="text-center text-sm text-[#6B7C8F]">
+                Session cards reviewed: <span className="font-semibold">{sessionCardCount}</span>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="text-center text-sm text-[#6B7C8F]">
-          Internal Use Only · Midea Thailand Language Training Platform
+          Internal Use Only | Midea Thailand Language Training Platform
         </div>
       </div>
     </div>
