@@ -5,7 +5,6 @@ import { ArrowDownUp, BarChart3, Clock3, Shield, Trophy, Users } from 'lucide-re
 
 import {
   getEmptyManagerDashboardAnalytics,
-  getManagerDashboardAnalytics,
   type AccuracyPoint,
   type ActivityPoint,
   type AnalyticsWordStat,
@@ -71,7 +70,17 @@ export function ManagerDashboard({ sessionUser }: Props) {
       setErrorMessage('');
 
       try {
-        const data = await getManagerDashboardAnalytics();
+        const response = await fetch('/api/manager/dashboard', {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store',
+        });
+
+        if (!response.ok) {
+          throw new Error(response.status === 403 ? 'Forbidden' : 'Unable to load dashboard');
+        }
+
+        const data = (await response.json()) as ManagerDashboardAnalytics;
         if (!cancelled) setDashboard(data);
       } catch {
         if (!cancelled) {
@@ -104,7 +113,7 @@ export function ManagerDashboard({ sessionUser }: Props) {
     return [...filtered].sort((a, b) => {
       if (sortKey === 'avgAccuracy') return b.avgAccuracy - a.avgAccuracy;
       if (sortKey === 'totalStudyMinutes') return b.totalStudyMinutes - a.totalStudyMinutes;
-      if (sortKey === 'activeUsers') return b.learnerCount - a.learnerCount;
+      if (sortKey === 'activeUsers') return b.activeUsers - a.activeUsers;
       return b.totalActivity - a.totalActivity;
     });
   }, [dashboard.departmentRanking, departmentFilter, sortKey]);
@@ -205,7 +214,7 @@ export function ManagerDashboard({ sessionUser }: Props) {
                   <span>Department</span>
                   <span>Accuracy</span>
                   <span>Study Time</span>
-                  <span>Learners</span>
+                  <span>Active</span>
                 </div>
                 <div className="divide-y divide-white/10">
                   {departmentRows.length === 0 ? (
@@ -342,11 +351,13 @@ function DepartmentTableRow({ department }: { department: DepartmentMetrics }) {
     <div className="grid grid-cols-[1.2fr_0.7fr_0.7fr_0.7fr] px-4 py-3 text-sm text-white">
       <div className="min-w-0">
         <p className="truncate font-medium">{department.department}</p>
-        <p className="text-xs text-white/65">{department.totalActivity} activities</p>
+        <p className="text-xs text-white/65">
+          {department.learnerCount} learners / {department.totalActivity} activities
+        </p>
       </div>
       <span>{department.avgAccuracy}%</span>
       <span>{department.totalStudyMinutes}m</span>
-      <span>{department.learnerCount}</span>
+      <span>{department.activeUsers}</span>
     </div>
   );
 }

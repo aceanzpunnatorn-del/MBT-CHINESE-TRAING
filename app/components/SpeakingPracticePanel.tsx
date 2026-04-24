@@ -211,13 +211,13 @@ export function SpeakingPracticePanel({
   }
 
   return (
-    <div className="mx-auto max-w-4xl rounded-[24px] border border-[#D9E7F0] bg-white p-5 shadow-[0_10px_30px_rgba(46,167,224,0.08)] md:p-6">
+    <div className="duo-surface mx-auto max-w-4xl rounded-[28px] p-4 sm:p-5 md:p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Radio className="h-4 w-4 text-[#2EA7E0]" />
           <h3 className="text-lg font-bold text-[#163047]">Speaking Practice</h3>
         </div>
-        <span className="rounded-full bg-[#F4FAFD] px-3 py-1 text-xs font-semibold text-[#2EA7E0]">
+        <span className="rounded-full bg-[#F3FBE8] px-3 py-1 text-xs font-semibold text-[#58CC02]">
           Listen / Speak / Score
         </span>
       </div>
@@ -243,10 +243,10 @@ export function SpeakingPracticePanel({
                 disabled={item.disabled}
                 onClick={() => setPracticeMode(item.key)}
                 className={cn(
-                  'rounded-2xl border px-4 py-2 text-sm font-medium',
+                  'rounded-2xl border px-4 py-2.5 text-sm font-medium',
                   practiceMode === item.key
-                    ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                    : 'border-[#D9E7F0] bg-white text-[#163047]',
+                    ? 'duo-chip-active'
+                    : 'duo-chip-inactive',
                   item.disabled && 'cursor-not-allowed opacity-50'
                 )}
               >
@@ -255,9 +255,9 @@ export function SpeakingPracticePanel({
             ))}
           </div>
 
-          <div className="rounded-3xl bg-gradient-to-br from-slate-900 via-blue-900 to-cyan-800 p-5 text-white">
+          <div className="rounded-3xl bg-gradient-to-br from-[#58CC02] via-[#72D620] to-[#14B8A6] p-4 text-white sm:p-5">
             <p className="text-xs uppercase tracking-[0.18em] text-white/70">{target.label}</p>
-            <p className="mt-3 text-3xl font-bold leading-tight md:text-4xl">{target.text}</p>
+            <p className="mt-3 text-2xl font-bold leading-tight sm:text-3xl md:text-4xl">{target.text}</p>
 
             {target.speechLang === 'zh-CN' && showPinyin && target.guide ? (
               <p className="mt-3 text-base text-cyan-100 md:text-lg">{target.guide}</p>
@@ -273,7 +273,7 @@ export function SpeakingPracticePanel({
                 onClick={() =>
                   void onSpeak(target.text, target.speechLang, `speaking-${practiceMode}-${card.zh}-${card.th}`)
                 }
-                className="inline-flex items-center gap-2 rounded-2xl bg-white/15 px-4 py-3 text-sm font-medium text-white hover:bg-white/25"
+                className="inline-flex min-h-[48px] items-center gap-2 rounded-2xl bg-white/20 px-4 py-3 text-sm font-medium text-white hover:bg-white/30"
               >
                 <Volume2 className="h-4 w-4" />
                 Listen
@@ -284,7 +284,7 @@ export function SpeakingPracticePanel({
                   <button
                     type="button"
                     onClick={stopPractice}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-rose-500/90 px-4 py-3 text-sm font-medium text-white hover:bg-rose-500"
+                    className="inline-flex min-h-[48px] items-center gap-2 rounded-2xl bg-rose-500/90 px-4 py-3 text-sm font-medium text-white hover:bg-rose-500"
                   >
                     <MicOff className="h-4 w-4" />
                     Stop
@@ -293,14 +293,14 @@ export function SpeakingPracticePanel({
                   <button
                     type="button"
                     onClick={startPractice}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-500/90 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-500"
+                    className="duo-primary inline-flex min-h-[48px] items-center gap-2 rounded-2xl px-4 py-3 text-sm font-medium"
                   >
                     <Mic className="h-4 w-4" />
                     Start Speaking
                   </button>
                 )
               ) : (
-                <div className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm text-white/75">
+                <div className="inline-flex min-h-[48px] items-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm text-white/75">
                   <MicOff className="h-4 w-4" />
                   Browser speech scoring unavailable
                 </div>
@@ -309,11 +309,11 @@ export function SpeakingPracticePanel({
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
+            <div className="rounded-2xl border border-[#D8E9C9] bg-[#F8FDEB] p-4">
               <p className="text-xs uppercase tracking-[0.16em] text-[#6B7C8F]">Attempts</p>
               <p className="mt-2 text-2xl font-bold text-[#163047]">{attemptCount}</p>
             </div>
-            <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
+            <div className="rounded-2xl border border-[#D8E9C9] bg-[#F8FDEB] p-4">
               <p className="text-xs uppercase tracking-[0.16em] text-[#6B7C8F]">Best Score</p>
               <p className="mt-2 text-2xl font-bold text-[#163047]">{bestScore}</p>
             </div>
@@ -349,7 +349,7 @@ export function SpeakingPracticePanel({
               <Sparkles className="h-4 w-4 text-[#2EA7E0]" />
               Recognized Speech
             </div>
-            <p className="min-h-[72px] rounded-2xl bg-white px-4 py-3 text-sm leading-6 text-[#163047]">
+            <p className="min-h-[84px] rounded-2xl bg-white px-4 py-3 text-sm leading-6 text-[#163047]">
               {transcript || 'Your recognized speech will appear here after you speak.'}
             </p>
           </div>

@@ -2,13 +2,143 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
+  min-height: 100%;
+  background: #f4fafd;
 }
+
+html {
+  color-scheme: light;
+}
+
 body {
   font-family: Arial, Helvetica, sans-serif;
+  color: #163047;
+  overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background-image:
+    radial-gradient(circle at top left, rgba(123, 220, 41, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(46, 167, 224, 0.12), transparent 24%),
+    linear-gradient(180deg, #f8fff1 0%, #f4fafd 28%, #eef7ff 100%);
 }
+
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+[role='button'] {
+  touch-action: manipulation;
+}
+
+@layer utilities {
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mobile-shell {
+    padding-bottom: max(6.5rem, calc(5rem + env(safe-area-inset-bottom)));
+  }
+
+  .pb-safe {
+    padding-bottom: max(0.875rem, env(safe-area-inset-bottom));
+  }
+
+  .pt-safe {
+    padding-top: max(0.875rem, env(safe-area-inset-top));
+  }
+
+  .px-safe {
+    padding-left: max(0.875rem, env(safe-area-inset-left));
+    padding-right: max(0.875rem, env(safe-area-inset-right));
+  }
+}
+
+@layer components {
+  .duo-surface {
+    border: 1px solid #d9e8c3;
+    background: #ffffff;
+    box-shadow:
+      0 10px 0 #edf6df,
+      0 22px 48px rgba(88, 154, 42, 0.08);
+  }
+
+  .duo-primary {
+    border: 1px solid #69c81b;
+    background: linear-gradient(180deg, #7fe12a 0%, #58cc02 100%);
+    color: #ffffff;
+    box-shadow: 0 6px 0 #46a302;
+    transition:
+      transform 140ms ease,
+      box-shadow 140ms ease,
+      filter 140ms ease;
+  }
+
+  .duo-primary:hover {
+    filter: brightness(0.98);
+  }
+
+  .duo-primary:active {
+    transform: translateY(2px);
+    box-shadow: 0 4px 0 #46a302;
+  }
+
+  .duo-secondary {
+    border: 1px solid #d8e9c9;
+    background: #ffffff;
+    color: #42582f;
+    box-shadow: 0 4px 0 #edf6df;
+    transition:
+      transform 140ms ease,
+      box-shadow 140ms ease,
+      background-color 140ms ease;
+  }
+
+  .duo-secondary:hover {
+    background: #fbfff6;
+  }
+
+  .duo-secondary:active {
+    transform: translateY(2px);
+    box-shadow: 0 2px 0 #edf6df;
+  }
+
+  .duo-chip-active {
+    border: 1px solid #69c81b;
+    background: linear-gradient(180deg, #7fe12a 0%, #58cc02 100%);
+    color: #ffffff;
+    box-shadow: 0 4px 0 #46a302;
+  }
+
+  .duo-chip-inactive {
+    border: 1px solid #d8e9c9;
+    background: #ffffff;
+    color: #42582f;
+    box-shadow: 0 4px 0 #edf6df;
+  }
+
+  .duo-progress-track {
+    background: #e8f3d8;
+  }
+
+  .duo-progress-fill {
+    background: linear-gradient(90deg, #95e44f 0%, #58cc02 100%);
+  }
 }

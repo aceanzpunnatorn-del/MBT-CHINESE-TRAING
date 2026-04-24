@@ -5,7 +5,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Building2,
   Flame,
+  Gauge,
   Heart,
+  Repeat2,
   RotateCcw,
   Search,
   Shield,
@@ -14,12 +16,13 @@ import {
   Star,
   Trophy,
   Users,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 import { hsk4Data } from '@/lib/hsk4-data';
 import { factoryEnglish900th } from '@/lib/factory-english-900-th';
-import { supabase } from '@/lib/supabase';
-import { getUserSession, updateUserSession } from '@/lib/session';
+import { getUserSession, refreshUserSession, updateUserSession } from '@/lib/session';
 import { getUserProgress, upsertUserProgress } from '@/lib/progress';
 import {
   getWeakWords,
@@ -31,6 +34,21 @@ import { applyRatingToReviewQueue, createReviewQueue } from '@/lib/srs';
 import { getUserMetrics, type UserMetrics } from '@/lib/analytics';
 import { getRecommendedWords, type RecommendedWord } from '@/lib/recommendation';
 import { generateHint } from '@/lib/ai';
+import { getDailyScores, saveDailyScore } from '@/lib/scoreboard';
+import { logError } from '@/lib/logger';
+import { getThaiKaraoke } from '@/lib/thai-karaoke';
+import {
+  playFeedbackTone,
+  speakText,
+  stopSpeaking,
+  type SpeechLang,
+  type SpeechRatePreset,
+} from '@/lib/tts';
+import {
+  buildSentenceVariants,
+  getPreferredSentenceVariant,
+  type SentenceVariant,
+} from '@/lib/sentence-variants';
 
 import { ReviewPanel, ReviewComplete, type ReviewRating } from '@/app/components/ReviewPanel';
 import { ManagerDashboard } from '@/app/components/ManagerDashboard';
@@ -63,7 +81,7 @@ function CardShell({
   return (
     <div
       className={cn(
-        'rounded-[24px] border border-[#D9E7F0] bg-white shadow-[0_10px_30px_rgba(46,167,224,0.08)]',
+        'duo-surface rounded-[28px]',
         className
       )}
       style={style}
@@ -135,8 +153,15 @@ type TtsAudioState = {
   loading: boolean;
 };
 
+type AudioPlaybackTarget = {
+  text: string;
+  lang: SpeechLang;
+  key: string;
+};
+
 type LeaderboardEntry = {
   id?: number;
+  user_id?: string | null;
   name: string;
   employee_code?: string | null;
   department?: string | null;
@@ -144,6 +169,7 @@ type LeaderboardEntry = {
   mode: LearningMode;
   score_date?: string;
   created_at?: string;
+  session_seconds?: number | null;
 };
 
 type DisplayCard = {
@@ -153,12 +179,14 @@ type DisplayCard = {
   th: string;
   thToZh?: string;
   category?: string;
+  partOfSpeech?: string;
   sentenceZh?: string;
   sentencePinyin?: string;
   sentenceTh?: string;
   sentenceEn?: string;
   thaiPronunciation?: string;
   sentenceThaiPronunciation?: string;
+  sentenceVariants?: SentenceVariant[];
   image?: string;
   source: 'hsk4' | 'factory';
 };
@@ -207,6 +235,15 @@ const DEPARTMENTS = [
   'Other',
 ];
 
+const AUDIO_SPEED_OPTIONS: Array<{
+  key: SpeechRatePreset;
+  label: string;
+}> = [
+  { key: 'slow', label: 'Slow' },
+  { key: 'clear', label: 'Clear' },
+  { key: 'normal', label: 'Normal' },
+];
+
 const MOJIBAKE_PATTERN = /[\u00c3\u00c4\u00c5\u00c7\u00f0\u00e2]|\uFFFD/u;
 
 function getSafeCardImage(image: string | undefined, source: 'hsk4' | 'factory') {
@@ -226,6 +263,20 @@ function normalizeCard(
 ): DisplayCard {
   if (source === 'hsk4') {
     const hskItem = item as Hsk4DataItem;
+    const sentenceVariants = buildSentenceVariants({
+      id: `hsk4-${hskItem.id ?? idx + 1}`,
+      zh: hskItem.zh,
+      pinyin: hskItem.pinyin,
+      th: hskItem.th,
+      sentenceZh: hskItem.sentenceZh,
+      sentencePinyin: hskItem.sentencePinyin,
+      sentenceTh: hskItem.sentenceTh,
+      sentenceEn: hskItem.sentenceEn,
+      sentenceThaiPronunciation: hskItem.sentenceThaiPronunciation,
+      source: 'hsk4',
+      category: hskItem.category || 'HSK4',
+    });
+    const preferredSentence = getPreferredSentenceVariant(sentenceVariants, 'applied');
 
     return {
       id: `hsk4-${hskItem.id ?? idx + 1}`,
@@ -234,18 +285,39 @@ function normalizeCard(
       th: hskItem.th,
       thToZh: hskItem.thToZh,
       category: hskItem.category || 'HSK4',
-      sentenceZh: hskItem.sentenceZh,
-      sentencePinyin: hskItem.sentencePinyin,
-      sentenceTh: hskItem.sentenceTh,
-      sentenceEn: hskItem.sentenceEn || '',
-      thaiPronunciation: hskItem.thaiPronunciation,
-      sentenceThaiPronunciation: hskItem.sentenceThaiPronunciation,
+      sentenceZh: preferredSentence?.zh || hskItem.sentenceZh,
+      sentencePinyin: preferredSentence?.pinyin || hskItem.sentencePinyin,
+      sentenceTh: preferredSentence?.th || hskItem.sentenceTh,
+      sentenceEn: preferredSentence?.en || hskItem.sentenceEn || '',
+      thaiPronunciation: getThaiKaraoke(hskItem.th, hskItem.thaiPronunciation),
+      sentenceThaiPronunciation:
+        preferredSentence?.thaiPronunciation ||
+        getThaiKaraoke(
+          preferredSentence?.th || hskItem.sentenceTh,
+          hskItem.sentenceThaiPronunciation
+        ),
+      sentenceVariants,
       image: getSafeCardImage(hskItem.image, 'hsk4'),
       source: 'hsk4',
     };
   }
 
   const factoryItem = item as FactoryDataItem;
+  const sentenceVariants = buildSentenceVariants({
+    id: `factory-${factoryItem.id}`,
+    zh: factoryItem.zhMeaning,
+    pinyin: factoryItem.en,
+    th: factoryItem.thMeaning,
+    sentenceZh: factoryItem.sentenceZh,
+    sentencePinyin: factoryItem.uk,
+    sentenceTh: factoryItem.sentenceTh,
+    sentenceEn: factoryItem.sentenceEn,
+    sentenceThaiPronunciation: factoryItem.code,
+    source: 'factory',
+    category: factoryItem.pos || 'Factory English',
+    partOfSpeech: factoryItem.pos,
+  });
+  const preferredSentence = getPreferredSentenceVariant(sentenceVariants, 'applied');
 
   return {
     id: `factory-${factoryItem.id}`,
@@ -254,12 +326,16 @@ function normalizeCard(
     th: factoryItem.thMeaning,
     thToZh: factoryItem.zhMeaning,
     category: factoryItem.pos || 'Factory English',
-    sentenceZh: factoryItem.sentenceZh,
-    sentencePinyin: factoryItem.uk,
-    sentenceTh: factoryItem.sentenceTh,
-    sentenceEn: factoryItem.sentenceEn,
-    thaiPronunciation: factoryItem.us,
-    sentenceThaiPronunciation: factoryItem.code,
+    partOfSpeech: factoryItem.pos,
+    sentenceZh: preferredSentence?.zh || factoryItem.sentenceZh,
+    sentencePinyin: preferredSentence?.pinyin || factoryItem.uk,
+    sentenceTh: preferredSentence?.th || factoryItem.sentenceTh,
+    sentenceEn: preferredSentence?.en || factoryItem.sentenceEn,
+    thaiPronunciation: getThaiKaraoke(factoryItem.thMeaning, factoryItem.us),
+    sentenceThaiPronunciation:
+      preferredSentence?.thaiPronunciation ||
+      getThaiKaraoke(preferredSentence?.th || factoryItem.sentenceTh, factoryItem.code),
+    sentenceVariants,
     image: getSafeCardImage(undefined, 'factory'),
     source: 'factory',
   };
@@ -275,7 +351,7 @@ export default function FlashcardApp() {
   const [showSentence, setShowSentence] = useState(true);
   const [showImage, setShowImage] = useState(true);
   const [showPinyin, setShowPinyin] = useState(true);
-  const [showThaiReading, setShowThaiReading] = useState(false);
+  const [showThaiReading, setShowThaiReading] = useState(true);
   const [showPinyinGuide, setShowPinyinGuide] = useState(false);
 
   const [deckSeed, setDeckSeed] = useState(0);
@@ -287,6 +363,11 @@ export default function FlashcardApp() {
     key: null,
     loading: false,
   });
+  const [audioMuted, setAudioMuted] = useState(false);
+  const [audioSpeed, setAudioSpeed] = useState<SpeechRatePreset>('clear');
+  const [autoPlayWord, setAutoPlayWord] = useState(false);
+  const [autoPlaySentence, setAutoPlaySentence] = useState(false);
+  const [feedbackToneEnabled, setFeedbackToneEnabled] = useState(true);
 
   const [playerName, setPlayerName] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
@@ -329,14 +410,27 @@ export default function FlashcardApp() {
   const [recommendationLoading, setRecommendationLoading] = useState(false);
   const [quizHint, setQuizHint] = useState('');
   const [quizHintLoading, setQuizHintLoading] = useState(false);
+  const [minimalLearningView, setMinimalLearningView] = useState(true);
+  const [showLearningTools, setShowLearningTools] = useState(false);
 
   const [showManagerDashboard, setShowManagerDashboard] = useState(true);
 
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const sessionStartedAtRef = React.useRef(Date.now());
+  const lastSpokenRef = React.useRef<AudioPlaybackTarget | null>(null);
+  const lastAutoPlayKeyRef = React.useRef<string>('');
+  const autoPlaySequenceRef = React.useRef(0);
+  const audioSettingsLoadedRef = React.useRef(false);
 
   useEffect(() => {
     const savedLearningMode = localStorage.getItem('midea-learning-mode');
     const savedAppMode = localStorage.getItem('midea-app-mode');
+    const savedMinimalView = localStorage.getItem('midea-minimal-learning-view');
+    const savedAudioMuted = localStorage.getItem('midea-audio-muted');
+    const savedAudioSpeed = localStorage.getItem('midea-audio-speed');
+    const savedAutoPlayWord = localStorage.getItem('midea-audio-autoplay-word');
+    const savedAutoPlaySentence = localStorage.getItem('midea-audio-autoplay-sentence');
+    const savedFeedbackTone = localStorage.getItem('midea-audio-feedback-tone');
 
     if (savedLearningMode === 'thai' || savedLearningMode === 'thai-learns-chinese') {
       setLearningMode('thai-learns-chinese');
@@ -351,6 +445,36 @@ export default function FlashcardApp() {
     ) {
       setMode(savedAppMode);
     }
+
+    if (savedMinimalView === 'false') {
+      setMinimalLearningView(false);
+    }
+
+    if (
+      savedAudioSpeed === 'slow' ||
+      savedAudioSpeed === 'clear' ||
+      savedAudioSpeed === 'normal'
+    ) {
+      setAudioSpeed(savedAudioSpeed);
+    }
+
+    if (savedAudioMuted === 'true') {
+      setAudioMuted(true);
+    }
+
+    if (savedAutoPlayWord === 'true') {
+      setAutoPlayWord(true);
+    }
+
+    if (savedAutoPlaySentence === 'true') {
+      setAutoPlaySentence(true);
+    }
+
+    if (savedFeedbackTone === 'false') {
+      setFeedbackToneEnabled(false);
+    }
+
+    audioSettingsLoadedRef.current = true;
   }, []);
 
   useEffect(() => {
@@ -365,13 +489,72 @@ export default function FlashcardApp() {
   }, [mode]);
 
   useEffect(() => {
+    localStorage.setItem('midea-minimal-learning-view', minimalLearningView ? 'true' : 'false');
+  }, [minimalLearningView]);
+
+  useEffect(() => {
+    if (!audioSettingsLoadedRef.current) return;
+    localStorage.setItem('midea-audio-muted', audioMuted ? 'true' : 'false');
+  }, [audioMuted]);
+
+  useEffect(() => {
+    if (audioMuted) {
+      stopCurrentAudio();
+    }
+  }, [audioMuted]);
+
+  useEffect(() => {
+    if (!audioSettingsLoadedRef.current) return;
+    localStorage.setItem('midea-audio-speed', audioSpeed);
+  }, [audioSpeed]);
+
+  useEffect(() => {
+    if (!audioSettingsLoadedRef.current) return;
+    localStorage.setItem('midea-audio-autoplay-word', autoPlayWord ? 'true' : 'false');
+  }, [autoPlayWord]);
+
+  useEffect(() => {
+    if (!audioSettingsLoadedRef.current) return;
+    localStorage.setItem('midea-audio-autoplay-sentence', autoPlaySentence ? 'true' : 'false');
+  }, [autoPlaySentence]);
+
+  useEffect(() => {
+    if (!audioSettingsLoadedRef.current) return;
+    localStorage.setItem('midea-audio-feedback-tone', feedbackToneEnabled ? 'true' : 'false');
+  }, [feedbackToneEnabled]);
+
+  useEffect(() => {
+    lastAutoPlayKeyRef.current = '';
+  }, [audioMuted, autoPlaySentence, autoPlayWord, learningMode, mode]);
+
+  useEffect(() => {
+    let cancelled = false;
     const session = getUserSession();
 
     if (session) {
-      setSessionUser(session);
       setPlayerName(session.name || '');
       setEmployeeCode(session.employee_code || '');
       setDepartment(session.department || 'HR');
+
+      void refreshUserSession()
+        .then((verifiedSession) => {
+          if (cancelled) return;
+
+          if (!verifiedSession) {
+            setSessionUser(null);
+            return;
+          }
+
+          setSessionUser(verifiedSession);
+          setPlayerName(verifiedSession.name || '');
+          setEmployeeCode(verifiedSession.employee_code || '');
+          setDepartment(verifiedSession.department || 'HR');
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setSessionUser(null);
+          logError('refreshUserSession', error);
+        });
     } else {
       const savedName = localStorage.getItem('midea-player-name') || '';
       const savedCode = localStorage.getItem('midea-employee-code') || '';
@@ -390,6 +573,7 @@ export default function FlashcardApp() {
     setLevel(savedLevel > 0 ? savedLevel : 1);
 
     return () => {
+      cancelled = true;
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -632,19 +816,16 @@ export default function FlashcardApp() {
     setLoadingBoard(true);
 
     const { start, end } = getDateRange(rankingPeriod);
-
-    const { data, error } = await supabase
-      .from('daily_scores')
-      .select('*')
-      .eq('mode', learningMode)
-      .gte('score_date', start)
-      .lte('score_date', end);
-
-    if (!error && data) {
+    try {
+      const scores = await getDailyScores({
+        learningMode,
+        dateFrom: start,
+        dateTo: end,
+      });
       const grouped = new Map<string, LeaderboardEntry>();
 
-      (data as LeaderboardEntry[]).forEach((item) => {
-        const key = item.employee_code || item.name;
+      scores.forEach((item) => {
+        const key = item.user_id || item.employee_code || item.name;
         if (!grouped.has(key)) {
           grouped.set(key, { ...item, score: Number(item.score) || 0 });
         } else {
@@ -659,12 +840,13 @@ export default function FlashcardApp() {
 
       setLeaderboard(sorted);
       setPlayerCount(grouped.size);
-    } else {
+    } catch (error) {
+      logError('loadLeaderboard', error, { learningMode, rankingPeriod });
       setLeaderboard([]);
       setPlayerCount(0);
+    } finally {
+      setLoadingBoard(false);
     }
-
-    setLoadingBoard(false);
   }
 
   const mergedCards = useMemo<DisplayCard[]>(() => {
@@ -700,6 +882,7 @@ export default function FlashcardApp() {
           card.th,
           card.thToZh,
           card.category,
+          card.partOfSpeech,
           card.sentenceZh,
           card.sentencePinyin,
           card.sentenceTh,
@@ -707,6 +890,14 @@ export default function FlashcardApp() {
           card.thaiPronunciation,
           card.sentenceThaiPronunciation,
           card.source,
+          ...(card.sentenceVariants ?? []).flatMap((variant) => [
+            variant.label,
+            variant.zh,
+            variant.th,
+            variant.pinyin,
+            variant.en,
+            variant.thaiPronunciation,
+          ]),
         ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(q))
@@ -865,6 +1056,142 @@ export default function FlashcardApp() {
   const sessionGoal = 20;
   const sessionGoalProgress = Math.min(100, Math.round((sessionCardCount / sessionGoal) * 100));
   const smartDeckCount = smartDeckCards.length;
+  const currentCardNumber = Math.min(index + 1, Math.max(smartFilteredCards.length, 1));
+  const shouldShowLearningTools = !minimalLearningView || showLearningTools;
+  const currentSentenceVariant = useMemo(
+    () => getPreferredSentenceVariant(currentCard?.sentenceVariants, 'applied'),
+    [currentCard]
+  );
+  const quizSentenceVariant = useMemo(() => {
+    if (!currentCard) return null;
+
+    return (
+      currentCard.sentenceVariants?.find((variant) => variant.difficulty === 'challenge') ||
+      currentCard.sentenceVariants?.find((variant) => variant.difficulty === 'applied') ||
+      currentCard.sentenceVariants?.[0] ||
+      null
+    );
+  }, [currentCard]);
+  const deckLabel =
+    deckMode === 'smart'
+      ? 'Smart session'
+      : deckMode === 'review'
+      ? 'Review deck'
+      : deckMode === 'weak'
+      ? 'Weak deck'
+      : 'Normal deck';
+  const isManagerUser = sessionUser?.role === 'manager' || sessionUser?.role === 'admin';
+  const modeOptions: Array<{ key: AppMode; label: string }> = [
+    { key: 'flashcards', label: 'Cards' },
+    { key: 'quiz', label: 'Quiz' },
+    {
+      key: 'review',
+      label: `Review${dueReviewIds.length > 0 ? ` (${dueReviewIds.length})` : ''}`,
+    },
+  ];
+  const sourceOptions: Array<{ key: VocabSet; label: string }> = [
+    { key: 'all', label: 'All' },
+    { key: 'hsk4', label: 'HSK4' },
+    { key: 'factory', label: 'Factory' },
+  ];
+
+  function getFlashcardWordTarget(card: DisplayCard): AudioPlaybackTarget {
+    if (learningMode === 'thai-learns-chinese') {
+      return flipped
+        ? { text: card.th, lang: 'th-TH', key: `auto-flash-answer-${card.id}` }
+        : { text: card.zh, lang: 'zh-CN', key: `auto-flash-front-${card.id}` };
+    }
+
+    return flipped
+      ? { text: card.zh, lang: 'zh-CN', key: `auto-flash-answer-${card.id}` }
+      : { text: card.th, lang: 'th-TH', key: `auto-flash-front-${card.id}` };
+  }
+
+  function getFlashcardSentenceTarget(card: DisplayCard): AudioPlaybackTarget | null {
+    const sentenceText =
+      learningMode === 'thai-learns-chinese'
+        ? currentSentenceVariant?.zh || card.sentenceZh
+        : currentSentenceVariant?.th || card.sentenceTh;
+
+    if (!sentenceText) return null;
+
+    return {
+      text: sentenceText,
+      lang: learningMode === 'thai-learns-chinese' ? 'zh-CN' : 'th-TH',
+      key: `auto-flash-sentence-${card.id}`,
+    };
+  }
+
+  function getQuizWordTarget(card: DisplayCard): AudioPlaybackTarget {
+    return {
+      text: learningMode === 'thai-learns-chinese' ? card.zh : card.th,
+      lang: learningMode === 'thai-learns-chinese' ? 'zh-CN' : 'th-TH',
+      key: `auto-quiz-word-${card.id}`,
+    };
+  }
+
+  function getQuizSentenceTarget(card: DisplayCard): AudioPlaybackTarget | null {
+    const sentenceText =
+      learningMode === 'thai-learns-chinese'
+        ? quizSentenceVariant?.zh || card.sentenceZh
+        : quizSentenceVariant?.th || card.sentenceTh;
+
+    if (!sentenceText) return null;
+
+    return {
+      text: sentenceText,
+      lang: learningMode === 'thai-learns-chinese' ? 'zh-CN' : 'th-TH',
+      key: `auto-quiz-sentence-${card.id}`,
+    };
+  }
+  const deckOptions: Array<{ key: DeckMode; label: string; nextMode: AppMode }> = [
+    { key: 'smart', label: `Smart (${smartDeckCount})`, nextMode: 'flashcards' },
+    { key: 'normal', label: 'Normal', nextMode: 'flashcards' },
+    { key: 'review', label: `Review (${dueReviewIds.length})`, nextMode: 'review' },
+    { key: 'weak', label: `Weak (${weakWordIds.length})`, nextMode: 'review' },
+  ];
+  const heroMetrics: Array<{
+    label: string;
+    value: string | number;
+    hideOnMobile?: boolean;
+  }> = [
+    {
+      label: 'Vocabulary Set',
+      value:
+        vocabularySource === 'all'
+          ? 'All'
+          : vocabularySource === 'hsk4'
+          ? 'HSK4'
+          : 'Factory',
+    },
+    {
+      label: 'Current Card',
+      value: `${currentCardNumber}/${smartFilteredCards.length || 1}`,
+    },
+    {
+      label: 'Session Goal',
+      value: `${Math.min(sessionCardCount, sessionGoal)}/${sessionGoal}`,
+    },
+    {
+      label: 'Streak',
+      value: streak,
+    },
+    {
+      label: 'Weak Words',
+      value: weakWordIds.length,
+      hideOnMobile: true,
+    },
+    {
+      label: 'XP',
+      value: xp,
+      hideOnMobile: true,
+    },
+    {
+      label: 'Level',
+      value: level,
+      hideOnMobile: true,
+    },
+  ];
 
   function openDeck(nextDeckMode: DeckMode, nextMode: AppMode = mode) {
     setDeckMode(nextDeckMode);
@@ -881,6 +1208,7 @@ export default function FlashcardApp() {
   }
 
   function resetCardView() {
+    stopCurrentAudio();
     setFlipped(false);
     setQuizAnswer('');
     setQuizSubmitted(false);
@@ -914,7 +1242,10 @@ export default function FlashcardApp() {
   }
 
   function handleFlashcardTap() {
-    if (!flipped) setFlipped(true);
+    if (!flipped) {
+      stopCurrentAudio();
+      setFlipped(true);
+    }
     else nextCard();
   }
 
@@ -949,48 +1280,229 @@ export default function FlashcardApp() {
     setTimeout(() => setShowStreakBurst(false), 1800);
   }
 
-  async function handleSpeak(text?: string, lang: 'zh-CN' | 'th-TH' | 'en-US' = 'zh-CN', cacheKey?: string) {
-    if (!text) return;
-
-    window.speechSynthesis?.cancel();
-    const safeKey = cacheKey ?? text;
-
-    try {
-      setTtsState({ key: safeKey, loading: true });
-
-      const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!response.ok) throw new Error('TTS request failed');
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.preload = 'auto';
-
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        setTtsState({ key: null, loading: false });
-      };
-
-      audio.onerror = () => {
-        URL.revokeObjectURL(url);
-        setTtsState({ key: null, loading: false });
-      };
-
-      await audio.play();
-    } catch {
-      setTtsState({ key: null, loading: false });
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = lang;
-      utterance.rate = lang === 'th-TH' ? 0.95 : 0.92;
-      utterance.pitch = 1;
-      window.speechSynthesis.speak(utterance);
-    }
+  function stopCurrentAudio() {
+    autoPlaySequenceRef.current += 1;
+    stopSpeaking();
+    setTtsState({ key: null, loading: false });
   }
+
+  const handleSpeak = React.useCallback(
+    async (text?: string, lang: SpeechLang = 'zh-CN', cacheKey?: string) => {
+      const cleanText = text?.trim();
+      if (!cleanText || audioMuted) {
+        setTtsState({ key: null, loading: false });
+        return;
+      }
+
+      const safeKey = cacheKey ?? cleanText;
+      lastSpokenRef.current = { text: cleanText, lang, key: safeKey };
+
+      try {
+        setTtsState({ key: safeKey, loading: true });
+
+        await speakText({
+          text: cleanText,
+          lang,
+          ratePreset: audioSpeed,
+          onStart: () => setTtsState({ key: safeKey, loading: true }),
+          onEnd: () => setTtsState({ key: null, loading: false }),
+          onError: () => setTtsState({ key: null, loading: false }),
+        });
+      } catch (error) {
+        setTtsState({ key: null, loading: false });
+        logError('handleSpeak', error, { lang, key: safeKey, text: cleanText });
+      }
+    },
+    [audioMuted, audioSpeed]
+  );
+
+  const handleRepeatAudio = React.useCallback(() => {
+    const lastSpoken = lastSpokenRef.current;
+    if (!lastSpoken) return;
+    void handleSpeak(lastSpoken.text, lastSpoken.lang, `${lastSpoken.key}-repeat`);
+  }, [handleSpeak]);
+
+  const playAnswerFeedbackTone = React.useCallback(
+    (result: 'correct' | 'wrong') => {
+      if (audioMuted || !feedbackToneEnabled) return;
+
+      void playFeedbackTone(result).catch((error) => {
+        logError('playFeedbackTone', error, { result });
+      });
+    },
+    [audioMuted, feedbackToneEnabled]
+  );
+
+  const runAutoPlaySequence = React.useCallback(
+    async (targets: AudioPlaybackTarget[]) => {
+      if (audioMuted || targets.length === 0) return;
+
+      const sequenceId = autoPlaySequenceRef.current + 1;
+      autoPlaySequenceRef.current = sequenceId;
+
+      for (const target of targets) {
+        if (sequenceId !== autoPlaySequenceRef.current) return;
+        await handleSpeak(target.text, target.lang, target.key);
+      }
+    },
+    [audioMuted, handleSpeak]
+  );
+
+  useEffect(() => {
+    if (!audioSettingsLoadedRef.current) return;
+    if (audioMuted || (!autoPlayWord && !autoPlaySentence)) return;
+
+    const targets: AudioPlaybackTarget[] = [];
+
+    if (mode === 'flashcards' && currentCard) {
+      if (autoPlayWord) {
+        targets.push(getFlashcardWordTarget(currentCard));
+      }
+
+      if (showSentence && autoPlaySentence) {
+        const sentenceTarget = getFlashcardSentenceTarget(currentCard);
+        if (sentenceTarget) {
+          targets.push(sentenceTarget);
+        }
+      }
+    }
+
+    if (mode === 'quiz' && currentCard) {
+      if (autoPlayWord) {
+        targets.push(getQuizWordTarget(currentCard));
+      }
+
+      if (showSentence && autoPlaySentence) {
+        const sentenceTarget = getQuizSentenceTarget(currentCard);
+        if (sentenceTarget) {
+          targets.push(sentenceTarget);
+        }
+      }
+    }
+
+    const sequenceKey = targets.map((target) => target.key).join('|');
+    if (!sequenceKey || lastAutoPlayKeyRef.current === sequenceKey) return;
+
+    lastAutoPlayKeyRef.current = sequenceKey;
+    void runAutoPlaySequence(targets);
+  }, [
+    audioMuted,
+    autoPlaySentence,
+    autoPlayWord,
+    currentCard,
+    flipped,
+    learningMode,
+    mode,
+    runAutoPlaySequence,
+    showSentence,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      stopCurrentAudio();
+    };
+  }, []);
+
+  const audioSystemPanel = (
+    <div className="space-y-3 rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[#163047]">
+          <Volume2 className="h-4 w-4 text-[#2EA7E0]" />
+          <p className="text-sm font-semibold">Audio System</p>
+        </div>
+        <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[#6B7C8F]">
+          {audioMuted ? 'Muted' : ttsState.loading ? 'Playing' : 'Ready'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => setAudioMuted((value) => !value)}
+          className={cn(
+            'rounded-2xl px-4 py-3 text-sm font-semibold',
+            audioMuted ? 'duo-chip-inactive' : 'duo-chip-active'
+          )}
+        >
+          {audioMuted ? 'Audio Muted' : 'Audio On'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setFeedbackToneEnabled((value) => !value)}
+          className={cn(
+            'rounded-2xl px-4 py-3 text-sm font-semibold',
+            feedbackToneEnabled ? 'duo-chip-active' : 'duo-chip-inactive'
+          )}
+        >
+          {feedbackToneEnabled ? 'Feedback Tone On' : 'Feedback Tone Off'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => setAutoPlayWord((value) => !value)}
+          className={cn(
+            'rounded-2xl px-4 py-3 text-sm font-semibold',
+            autoPlayWord ? 'duo-chip-active' : 'duo-chip-inactive'
+          )}
+        >
+          {autoPlayWord ? 'Auto Word On' : 'Auto Word Off'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setAutoPlaySentence((value) => !value)}
+          className={cn(
+            'rounded-2xl px-4 py-3 text-sm font-semibold',
+            autoPlaySentence ? 'duo-chip-active' : 'duo-chip-inactive'
+          )}
+        >
+          {autoPlaySentence ? 'Auto Sentence On' : 'Auto Sentence Off'}
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#6B7C8F]">
+          <Gauge className="h-4 w-4 text-[#2EA7E0]" />
+          Speech Speed
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {AUDIO_SPEED_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => setAudioSpeed(option.key)}
+              className={cn(
+                'rounded-xl px-3 py-2 text-sm font-semibold',
+                audioSpeed === option.key ? 'duo-chip-active' : 'duo-chip-inactive'
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={handleRepeatAudio}
+          className="duo-secondary flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm"
+        >
+          <Repeat2 className="h-4 w-4" />
+          Repeat
+        </button>
+        <button
+          type="button"
+          onClick={stopCurrentAudio}
+          className="duo-secondary flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm"
+        >
+          {audioMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+          Stop
+        </button>
+      </div>
+    </div>
+  );
 
   async function handleReviewRate(cardId: string, rating: ReviewRating) {
     const isCorrect = rating !== 'again';
@@ -1024,6 +1536,7 @@ export default function FlashcardApp() {
 
     setSessionCardCount((prev) => prev + 1);
     setAnswerResult(isCorrect ? 'correct' : 'wrong');
+    playAnswerFeedbackTone(isCorrect ? 'correct' : 'wrong');
     setTimeout(() => setAnswerResult(null), 700);
 
     setReviewQueue((prev) => {
@@ -1091,6 +1604,7 @@ export default function FlashcardApp() {
     setQuizAnswer(answer);
     setQuizSubmitted(true);
     setAnswerResult(isCorrect ? 'correct' : 'wrong');
+    playAnswerFeedbackTone(isCorrect ? 'correct' : 'wrong');
 
     setQuizScore((prev) => ({
       correct: prev.correct + (isCorrect ? 1 : 0),
@@ -1203,6 +1717,7 @@ export default function FlashcardApp() {
   }
 
   function shuffleCards() {
+    stopCurrentAudio();
     setDeckSeed((prev) => prev + 1);
     setIndex(0);
     resetCardView();
@@ -1211,6 +1726,12 @@ export default function FlashcardApp() {
   async function saveTodayScore() {
     const trimmedName = playerName.trim();
     const trimmedCode = employeeCode.trim();
+
+    if (!sessionUser?.id) {
+      setSaveMessage('Please sign in again before saving score');
+      setTimeout(() => setSaveMessage(''), 2000);
+      return;
+    }
 
     if (!trimmedName) {
       setSaveMessage('Please enter learner name');
@@ -1230,53 +1751,45 @@ export default function FlashcardApp() {
 
     const today = new Date().toISOString().slice(0, 10);
     const score = quizScore.correct + xp;
+    const sessionSeconds = Math.max(
+      0,
+      Math.round((Date.now() - sessionStartedAtRef.current) / 1000)
+    );
 
-    const { data: existing, error: existingError } = await supabase
-      .from('daily_scores')
-      .select('*')
-      .eq('name', trimmedName)
-      .eq('score_date', today)
-      .eq('mode', learningMode)
-      .limit(1);
-
-    if (existingError) {
-      setSaveMessage('Save failed');
-      setTimeout(() => setSaveMessage(''), 2000);
-      return;
-    }
-
-    if (existing && existing.length > 0) {
-      const currentBest = existing[0] as LeaderboardEntry;
-
-      if (score > currentBest.score) {
-        await supabase
-          .from('daily_scores')
-          .update({
-            score,
-            employee_code: trimmedCode || null,
-            department,
-          })
-          .eq('id', currentBest.id);
-      }
-    } else {
-      await supabase.from('daily_scores').insert({
-        name: trimmedName,
-        employee_code: trimmedCode || null,
-        department,
+    try {
+      await saveDailyScore({
+        user: {
+          id: sessionUser.id,
+          name: sessionUser.name,
+          employee_code: sessionUser.employee_code,
+          department: sessionUser.department,
+        },
+        learningMode,
         score,
-        mode: learningMode,
-        score_date: today,
+        scoreDate: today,
+        sessionSeconds,
+        correctAnswers: quizScore.correct,
+        wrongAnswers: Math.max(quizScore.total - quizScore.correct, 0),
+        cardsCompleted: sessionCardCount,
       });
-    }
 
-    await loadLeaderboard();
-    setSaveMessage('Score saved successfully');
-    setTimeout(() => setSaveMessage(''), 2000);
+      await loadLeaderboard();
+      setSaveMessage('Score saved successfully');
+    } catch (error) {
+      logError('saveTodayScore', error, {
+        userId: sessionUser.id,
+        learningMode,
+        today,
+      });
+      setSaveMessage('Save failed');
+    } finally {
+      setTimeout(() => setSaveMessage(''), 2000);
+    }
   }
 
   if (!currentCard && mode !== 'review') {
     return (
-      <div className="w-full bg-[#F4FAFD] p-3 sm:p-4 md:p-8">
+      <div className="w-full bg-[#F4FAFD] mobile-shell p-3 pt-safe sm:p-4 md:p-8">
         <CardShell className="mx-auto max-w-3xl p-10 text-center">
           <h1 className="text-2xl font-bold text-[#163047]">
             {deckMode === 'review'
@@ -1300,26 +1813,26 @@ export default function FlashcardApp() {
   }
 
   return (
-    <div className="w-full bg-[#F4FAFD] p-3 sm:p-4 md:p-8">
+    <div className="w-full bg-[#F4FAFD] mobile-shell p-3 pt-safe sm:p-4 md:p-8">
       <div className="mx-auto max-w-7xl space-y-5">
-        <CardShell className="overflow-hidden border-[#CFE5F2] bg-white">
-          <div className="flex flex-col gap-5 bg-gradient-to-r from-[#2EA7E0] to-[#1D8FC7] p-5 text-white md:p-8">
+        <CardShell className="overflow-hidden bg-white">
+          <div className="flex flex-col gap-5 bg-gradient-to-r from-[#58CC02] via-[#72D620] to-[#14B8A6] p-4 text-white sm:p-5 md:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="space-y-3">
-                <div className="inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2 text-sm">
+                <div className="inline-flex items-center gap-2 rounded-full bg-white/20 px-4 py-2 text-xs font-semibold sm:text-sm">
                   <Building2 className="h-4 w-4" />
-                  Midea Internal Learning System
+                  Today&apos;s mission
                 </div>
 
-                <h1 className="text-2xl font-bold sm:text-3xl md:text-5xl">
-                  Midea Thai-China Language Platform
+                <h1 className="text-2xl font-bold leading-tight sm:text-3xl md:text-5xl">
+                  Learn like a lesson game
                 </h1>
 
                 <p className="text-sm text-white/90 sm:text-base md:text-lg">
-                  Daily learning, pronunciation practice, quiz, ranking, and streak for internal staff
+                  Quick rounds, clear progress, smart review, and speaking practice for every shift.
                 </p>
 
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="hide-scrollbar -mx-1 mt-4 flex gap-2 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:px-0">
                   <button
                     onClick={() => {
                       setLearningMode('thai-learns-chinese');
@@ -1327,10 +1840,10 @@ export default function FlashcardApp() {
                       resetCardView();
                     }}
                     className={cn(
-                      'h-11 rounded-2xl border px-4 text-sm sm:text-base',
+                      'h-11 min-w-[220px] rounded-2xl px-4 text-sm font-semibold sm:min-w-0 sm:text-base',
                       learningMode === 'thai-learns-chinese'
-                        ? 'border-white bg-white text-[#1D8FC7]'
-                        : 'border-white/40 bg-white/10 text-white'
+                        ? 'duo-secondary border-white bg-white text-[#3E5B1A]'
+                        : 'border-white/40 bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]'
                     )}
                   >
                     Thai Staff Learning Chinese
@@ -1343,10 +1856,10 @@ export default function FlashcardApp() {
                       resetCardView();
                     }}
                     className={cn(
-                      'h-11 rounded-2xl border px-4 text-sm sm:text-base',
+                      'h-11 min-w-[220px] rounded-2xl px-4 text-sm font-semibold sm:min-w-0 sm:text-base',
                       learningMode === 'chinese-learns-thai'
-                        ? 'border-white bg-white text-[#1D8FC7]'
-                        : 'border-white/40 bg-white/10 text-white'
+                        ? 'duo-secondary border-white bg-white text-[#3E5B1A]'
+                        : 'border-white/40 bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]'
                     )}
                   >
                     Chinese Staff Learning Thai
@@ -1354,32 +1867,17 @@ export default function FlashcardApp() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-7">
-                {[
-                  [
-                    'Vocabulary Set',
-                    vocabularySource === 'all'
-                      ? 'All'
-                      : vocabularySource === 'hsk4'
-                      ? 'HSK4'
-                      : 'Factory',
-                  ],
-                  ['Total Vocabulary', smartFilteredCards.length],
-                  [
-                    'Current Card',
-                    `${Math.min(index + 1, Math.max(smartFilteredCards.length, 1))}/${smartFilteredCards.length}`,
-                  ],
-                  ['Completion', `${progress}%`],
-                  ['Session Goal', `${Math.min(sessionCardCount, sessionGoal)}/${sessionGoal}`],
-                  ['XP', xp],
-                  ['Level', level],
-                ].map(([label, value]) => (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
+                {heroMetrics.map((item) => (
                   <div
-                    key={String(label)}
-                    className="rounded-2xl border border-white/25 bg-white/15 p-4 backdrop-blur"
+                    key={item.label}
+                    className={cn(
+                      'rounded-2xl border border-white/25 bg-white/15 p-3 backdrop-blur sm:p-4',
+                      item.hideOnMobile && 'hidden sm:block'
+                    )}
                   >
-                    <p className="text-xs text-white/80 sm:text-sm">{label}</p>
-                    <p className="text-2xl font-bold text-white">{value}</p>
+                    <p className="text-[11px] text-white/80 sm:text-sm">{item.label}</p>
+                    <p className="text-xl font-bold text-white sm:text-2xl">{item.value}</p>
                   </div>
                 ))}
               </div>
@@ -1387,8 +1885,7 @@ export default function FlashcardApp() {
           </div>
         </CardShell>
 
-        {showManagerDashboard &&
-          (sessionUser?.role === 'manager' || sessionUser?.role === 'admin') && (
+        {showManagerDashboard && isManagerUser && (
             <div className="mb-6">
               <ManagerDashboard sessionUser={sessionUser} />
             </div>
@@ -1408,10 +1905,207 @@ export default function FlashcardApp() {
           </motion.div>
         )}
 
-        <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
-          <CardShell className="border-[#D9E7F0] bg-white">
+        <CardShell className="xl:hidden border-[#D9E7F0] bg-white">
+          <div className="space-y-4 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-rose-500">
+                {[1, 2, 3].map((heart) => (
+                  <Heart
+                    key={heart}
+                    className={cn('h-5 w-5', heart <= lives ? 'fill-current' : 'opacity-25')}
+                  />
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2 text-xs font-semibold">
+                <span className="rounded-full bg-[#F3FBE8] px-3 py-2 text-[#36521A]">
+                  XP {xp}
+                </span>
+                <span className="rounded-full bg-amber-50 px-3 py-2 text-amber-700">
+                  Streak {streak}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-[#163047]">Study Mode</p>
+              <div className="hide-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                {modeOptions.map((m) => (
+                  <button
+                    key={m.key}
+                    className={cn(
+                      'h-11 min-w-[112px] rounded-full px-4 text-sm font-semibold',
+                      mode === m.key
+                        ? 'duo-chip-active'
+                        : 'duo-chip-inactive'
+                    )}
+                    onClick={() => {
+                      setMode(m.key);
+                      localStorage.setItem('midea-app-mode', m.key);
+                      setReviewQueue([]);
+                      setReviewSessionTotal(0);
+                      setReviewDone(false);
+                      resetCardView();
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-[#163047]">Vocabulary Set</p>
+              <div className="hide-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                {sourceOptions.map((source) => (
+                  <button
+                    key={source.key}
+                    onClick={() => {
+                      setVocabularySource(source.key);
+                      setIndex(0);
+                      resetCardView();
+                    }}
+                    className={cn(
+                      'min-w-[90px] rounded-2xl px-4 py-2.5 text-sm font-semibold',
+                      vocabularySource === source.key ? 'duo-chip-active' : 'duo-chip-inactive'
+                    )}
+                  >
+                    {source.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-[#163047]">Study Deck</p>
+                <span className="rounded-full bg-[#F3FBE8] px-3 py-1 text-[11px] font-semibold text-[#58CC02]">
+                  {deckLabel}
+                </span>
+              </div>
+
+              <div className="hide-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                {deckOptions.map((item) => (
+                  <button
+                    key={item.key}
+                    onClick={() => openDeck(item.key, item.nextMode)}
+                    className={cn(
+                      'min-w-[108px] rounded-2xl px-4 py-2.5 text-sm font-semibold',
+                      deckMode === item.key ? 'duo-chip-active' : 'duo-chip-inactive'
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-2xl bg-[#F8FDEB] p-3 text-center">
+                <p className="text-[11px] text-[#6B7C8F]">Due</p>
+                <p className="mt-1 text-base font-bold text-[#163047]">{recommendationSummary.review}</p>
+              </div>
+              <div className="rounded-2xl bg-[#F8FDEB] p-3 text-center">
+                <p className="text-[11px] text-[#6B7C8F]">Weak</p>
+                <p className="mt-1 text-base font-bold text-[#163047]">
+                  {recommendationSummary.weak + recommendationSummary.low_accuracy}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-[#F8FDEB] p-3 text-center">
+                <p className="text-[11px] text-[#6B7C8F]">New</p>
+                <p className="mt-1 text-base font-bold text-[#163047]">{recommendationSummary.new}</p>
+              </div>
+            </div>
+
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7C8F]" />
+              <input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setIndex(0);
+                  resetCardView();
+                }}
+                placeholder="Search Chinese / Thai / Pinyin"
+                className="h-12 w-full rounded-2xl border border-[#D8E9C9] bg-white pl-10 pr-3 text-base text-[#163047] outline-none placeholder:text-[#9BAABA]"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                className={cn(
+                  'h-11 rounded-2xl text-sm font-semibold',
+                  showSentence ? 'duo-chip-active' : 'duo-chip-inactive'
+                )}
+                onClick={() => setShowSentence((value) => !value)}
+              >
+                {showSentence ? 'Sentence On' : 'Sentence Off'}
+              </button>
+              <button
+                className={cn(
+                  'h-11 rounded-2xl text-sm font-semibold',
+                  showImage ? 'duo-chip-active' : 'duo-chip-inactive'
+                )}
+                onClick={() => setShowImage((value) => !value)}
+              >
+                {showImage ? 'Image On' : 'Image Off'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                className="duo-secondary flex h-11 items-center justify-center rounded-2xl"
+                onClick={shuffleCards}
+              >
+                <Shuffle className="mr-2 h-4 w-4" />
+                Shuffle
+              </button>
+
+              <button
+                className="duo-secondary flex h-11 items-center justify-center rounded-2xl"
+                onClick={resetAll}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Reset
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 xl:hidden">
+              <button
+                type="button"
+                onClick={() => setAudioMuted((value) => !value)}
+                className={cn(
+                  'flex h-11 items-center justify-center gap-2 rounded-2xl text-xs font-semibold',
+                  audioMuted ? 'duo-chip-inactive' : 'duo-chip-active'
+                )}
+              >
+                {audioMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                {audioMuted ? 'Muted' : 'Audio'}
+              </button>
+              <button
+                type="button"
+                onClick={handleRepeatAudio}
+                className="duo-secondary flex h-11 items-center justify-center gap-2 rounded-2xl text-xs font-semibold"
+              >
+                <Repeat2 className="h-4 w-4" />
+                Repeat
+              </button>
+              <button
+                type="button"
+                onClick={stopCurrentAudio}
+                className="duo-secondary flex h-11 items-center justify-center gap-2 rounded-2xl text-xs font-semibold"
+              >
+                <Volume2 className="h-4 w-4" />
+                Stop
+              </button>
+            </div>
+          </div>
+        </CardShell>
+
+        <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <CardShell className="order-2 self-start border-[#D9E7F0] bg-white xl:order-1 xl:sticky xl:top-6">
             <div className="space-y-4 p-5">
-              <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
+              <div className="hidden rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4 xl:block">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-rose-500">
                     {[1, 2, 3].map((heart) => (
@@ -1428,24 +2122,13 @@ export default function FlashcardApp() {
                 </div>
               </div>
 
-              <div className="flex gap-2">
-                {(
-                  [
-                    { key: 'flashcards', label: 'Cards' },
-                    { key: 'quiz', label: 'Quiz' },
-                    {
-                      key: 'review',
-                      label: `Review${dueReviewIds.length > 0 ? ` (${dueReviewIds.length})` : ''}`,
-                    },
-                  ] as { key: AppMode; label: string }[]
-                ).map((m) => (
+              <div className="hidden gap-2 xl:flex">
+                {modeOptions.map((m) => (
                   <button
                     key={m.key}
                     className={cn(
-                      'h-11 flex-1 rounded-full border text-xs font-medium',
-                      mode === m.key
-                        ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                        : 'border-[#D9E7F0] bg-white text-[#163047]'
+                      'h-11 flex-1 rounded-full text-xs font-semibold',
+                      mode === m.key ? 'duo-chip-active' : 'duo-chip-inactive'
                     )}
                     onClick={() => {
                       setMode(m.key);
@@ -1461,52 +2144,38 @@ export default function FlashcardApp() {
                 ))}
               </div>
 
-              <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
+              <div className="hidden rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4 xl:block">
                 <p className="mb-3 text-sm font-semibold text-[#163047]">Vocabulary Set</p>
                 <div className="grid grid-cols-3 gap-2">
-                  {(['all', 'hsk4', 'factory'] as VocabSet[]).map((source) => (
+                  {sourceOptions.map((source) => (
                     <button
-                      key={source}
+                      key={source.key}
                       onClick={() => {
-                        setVocabularySource(source);
+                        setVocabularySource(source.key);
                         setIndex(0);
                         resetCardView();
                       }}
                       className={cn(
-                        'rounded-xl border px-3 py-2 text-sm font-medium',
-                        vocabularySource === source
-                          ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                          : 'border-[#D9E7F0] bg-white text-[#163047]'
+                        'rounded-xl px-3 py-2 text-sm font-semibold',
+                        vocabularySource === source.key ? 'duo-chip-active' : 'duo-chip-inactive'
                       )}
                     >
-                      {source === 'all' ? 'All' : source === 'hsk4' ? 'HSK4' : 'Factory'}
+                      {source.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4">
+              <div className="hidden rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-4 xl:block">
                 <p className="mb-3 text-sm font-semibold text-[#163047]">Study Deck</p>
                 <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { key: 'smart', label: `Smart (${smartDeckCount})` },
-                    { key: 'normal', label: 'Normal' },
-                    { key: 'review', label: `Review (${dueReviewIds.length})` },
-                    { key: 'weak', label: `Weak (${weakWordIds.length})` },
-                  ].map((item) => (
+                  {deckOptions.map((item) => (
                     <button
                       key={item.key}
-                      onClick={() =>
-                        openDeck(
-                          item.key as DeckMode,
-                          item.key === 'review' ? 'review' : 'flashcards'
-                        )
-                      }
+                      onClick={() => openDeck(item.key, item.nextMode)}
                       className={cn(
-                        'rounded-xl border px-3 py-2 text-xs font-medium',
-                        deckMode === item.key
-                          ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                          : 'border-[#D9E7F0] bg-white text-[#163047]'
+                        'rounded-xl px-3 py-2 text-xs font-semibold',
+                        deckMode === item.key ? 'duo-chip-active' : 'duo-chip-inactive'
                       )}
                     >
                       {item.label}
@@ -1523,25 +2192,25 @@ export default function FlashcardApp() {
                       Smart queue mixes due review, weak words, and new items.
                     </p>
                   </div>
-                  <span className="rounded-full bg-[#F4FAFD] px-3 py-1 text-xs font-semibold text-[#2EA7E0]">
+                  <span className="rounded-full bg-[#F3FBE8] px-3 py-1 text-xs font-semibold text-[#58CC02]">
                     {recommendationLoading ? 'Syncing...' : `${smartDeckCount} cards`}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded-xl bg-[#F8FCFE] p-3 text-center">
+                  <div className="rounded-xl bg-[#F8FDEB] p-3 text-center">
                     <p className="text-[11px] text-[#6B7C8F]">Due</p>
                     <p className="mt-1 text-lg font-bold text-[#163047]">
                       {recommendationSummary.review}
                     </p>
                   </div>
-                  <div className="rounded-xl bg-[#F8FCFE] p-3 text-center">
+                  <div className="rounded-xl bg-[#F8FDEB] p-3 text-center">
                     <p className="text-[11px] text-[#6B7C8F]">Weak</p>
                     <p className="mt-1 text-lg font-bold text-[#163047]">
                       {recommendationSummary.weak + recommendationSummary.low_accuracy}
                     </p>
                   </div>
-                  <div className="rounded-xl bg-[#F8FCFE] p-3 text-center">
+                  <div className="rounded-xl bg-[#F8FDEB] p-3 text-center">
                     <p className="text-[11px] text-[#6B7C8F]">New</p>
                     <p className="mt-1 text-lg font-bold text-[#163047]">
                       {recommendationSummary.new}
@@ -1552,20 +2221,20 @@ export default function FlashcardApp() {
                 <div className="mt-3 grid gap-2">
                   <button
                     onClick={() => openDeck('smart', 'flashcards')}
-                    className="h-11 rounded-2xl bg-[#2EA7E0] px-4 text-sm font-semibold text-white hover:bg-[#1D8FC7]"
+                    className="duo-primary h-11 rounded-2xl px-4 text-sm font-semibold"
                   >
                     Start Smart Session
                   </button>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={() => openDeck('review', 'review')}
-                      className="h-11 rounded-2xl border border-[#D9E7F0] bg-white px-4 text-sm font-medium text-[#163047]"
+                      className="duo-secondary h-11 rounded-2xl px-4 text-sm font-medium"
                     >
                       Review Due
                     </button>
                     <button
                       onClick={() => openDeck('weak', 'review')}
-                      className="h-11 rounded-2xl border border-[#D9E7F0] bg-white px-4 text-sm font-medium text-[#163047]"
+                      className="duo-secondary h-11 rounded-2xl px-4 text-sm font-medium"
                     >
                       Weak Rescue
                     </button>
@@ -1600,10 +2269,8 @@ export default function FlashcardApp() {
               <div className="grid gap-2">
                 <button
                   className={cn(
-                    'h-11 w-full rounded-2xl border text-sm font-medium',
-                    showSentence
-                      ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                      : 'border-[#D9E7F0] bg-white text-[#163047]'
+                    'h-11 w-full rounded-2xl text-sm font-semibold',
+                    showSentence ? 'duo-chip-active' : 'duo-chip-inactive'
                   )}
                   onClick={() => setShowSentence((v) => !v)}
                 >
@@ -1612,10 +2279,8 @@ export default function FlashcardApp() {
 
                 <button
                   className={cn(
-                    'h-11 w-full rounded-2xl border text-sm font-medium',
-                    showImage
-                      ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                      : 'border-[#D9E7F0] bg-white text-[#163047]'
+                    'h-11 w-full rounded-2xl text-sm font-semibold',
+                    showImage ? 'duo-chip-active' : 'duo-chip-inactive'
                   )}
                   onClick={() => setShowImage((v) => !v)}
                 >
@@ -1628,25 +2293,27 @@ export default function FlashcardApp() {
 
                 <button
                   onClick={() => setShowPinyin((v) => !v)}
-                  className="w-full rounded-2xl border border-[#D9E7F0] bg-white px-4 py-3 text-sm text-[#163047]"
+                  className="duo-secondary w-full rounded-2xl px-4 py-3 text-sm"
                 >
                   {showPinyin ? 'Hide Pinyin' : 'Show Pinyin'}
                 </button>
 
                 <button
                   onClick={() => setShowThaiReading((v) => !v)}
-                  className="w-full rounded-2xl border border-[#D9E7F0] bg-white px-4 py-3 text-sm text-[#163047]"
+                  className="duo-secondary w-full rounded-2xl px-4 py-3 text-sm"
                 >
                   {showThaiReading ? 'Hide Thai Reading' : 'Show Thai Reading'}
                 </button>
 
                 <button
                   onClick={() => setShowPinyinGuide((v) => !v)}
-                  className="w-full rounded-2xl border border-[#D9E7F0] bg-white px-4 py-3 text-sm text-[#163047]"
+                  className="duo-secondary w-full rounded-2xl px-4 py-3 text-sm"
                 >
                   {showPinyinGuide ? 'Hide Tone Guide' : 'Show Tone Guide'}
                 </button>
               </div>
+
+              {audioSystemPanel}
 
               {showPinyinGuide && (
                 <div className="rounded-2xl border border-[#D9E7F0] bg-white p-4">
@@ -1672,7 +2339,7 @@ export default function FlashcardApp() {
                 </div>
               )}
 
-              <div>
+              <div className="hidden xl:block">
                 <p className="mb-2 text-sm font-medium text-[#163047]">Search Vocabulary</p>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6B7C8F]" />
@@ -1684,12 +2351,12 @@ export default function FlashcardApp() {
                       resetCardView();
                     }}
                     placeholder="Search Chinese / Thai / Pinyin"
-                    className="h-11 w-full rounded-2xl border border-[#D9E7F0] bg-white pl-9 pr-3 text-base text-[#163047] outline-none placeholder:text-[#9BAABA]"
+                    className="h-11 w-full rounded-2xl border border-[#D8E9C9] bg-white pl-9 pr-3 text-base text-[#163047] outline-none placeholder:text-[#9BAABA]"
                   />
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="hidden flex-col gap-2 sm:flex-row xl:flex">
                 <button
                   className="flex h-11 flex-1 items-center justify-center rounded-2xl border border-[#D9E7F0] bg-white text-[#163047]"
                   onClick={shuffleCards}
@@ -1712,9 +2379,9 @@ export default function FlashcardApp() {
                   <span>Completion Rate</span>
                   <span>{progress}%</span>
                 </div>
-                <div className="h-3 overflow-hidden rounded-full bg-[#D9E7F0]">
+                <div className="duo-progress-track h-3 overflow-hidden rounded-full">
                   <motion.div
-                    className="h-full rounded-full bg-gradient-to-r from-[#2EA7E0] to-[#1D8FC7]"
+                    className="duo-progress-fill h-full rounded-full"
                     animate={{ width: `${progress}%` }}
                     transition={{ duration: 0.35 }}
                   />
@@ -1726,9 +2393,9 @@ export default function FlashcardApp() {
                     {Math.min(sessionCardCount, sessionGoal)}/{sessionGoal}
                   </span>
                 </div>
-                <div className="h-3 overflow-hidden rounded-full bg-[#D9E7F0]">
+                <div className="duo-progress-track h-3 overflow-hidden rounded-full">
                   <motion.div
-                    className="h-full rounded-full bg-gradient-to-r from-[#FDBA74] to-[#F97316]"
+                    className="h-full rounded-full bg-gradient-to-r from-[#FACC4D] to-[#FF9F1C]"
                     animate={{ width: `${sessionGoalProgress}%` }}
                     transition={{ duration: 0.35 }}
                   />
@@ -1770,14 +2437,56 @@ export default function FlashcardApp() {
 
                   <button
                     onClick={() => {
-                      if (!playerName.trim()) return;
-                      localStorage.setItem('midea-player-name', playerName.trim());
-                      localStorage.setItem('midea-employee-code', employeeCode.trim());
-                      localStorage.setItem('midea-department', department);
-                      setSaveMessage('Profile saved');
-                      setTimeout(() => setSaveMessage(''), 1500);
+                      void (async () => {
+                        if (!playerName.trim()) return;
+
+                        if (sessionUser?.id) {
+                          try {
+                            const response = await fetch('/api/session/profile', {
+                              method: 'PATCH',
+                              headers: {
+                                'Content-Type': 'application/json',
+                              },
+                              credentials: 'include',
+                              body: JSON.stringify({
+                                name: playerName.trim(),
+                                department,
+                              }),
+                            });
+
+                            const payload = (await response.json()) as {
+                              user?: AppUser;
+                              error?: string;
+                            };
+
+                            if (!response.ok || !payload.user) {
+                              throw new Error(payload.error || 'Unable to save profile');
+                            }
+
+                            setSessionUser(payload.user);
+                            setPlayerName(payload.user.name);
+                            setEmployeeCode(payload.user.employee_code);
+                            setDepartment(payload.user.department);
+                            updateUserSession(payload.user);
+                            localStorage.setItem('midea-player-name', payload.user.name);
+                            localStorage.setItem('midea-employee-code', payload.user.employee_code);
+                            localStorage.setItem('midea-department', payload.user.department);
+                            setSaveMessage('Profile saved');
+                          } catch (error) {
+                            logError('saveProfile', error);
+                            setSaveMessage('Profile save failed');
+                          }
+                        } else {
+                          localStorage.setItem('midea-player-name', playerName.trim());
+                          localStorage.setItem('midea-employee-code', employeeCode.trim());
+                          localStorage.setItem('midea-department', department);
+                          setSaveMessage('Profile saved');
+                        }
+
+                        setTimeout(() => setSaveMessage(''), 1500);
+                      })();
                     }}
-                    className="h-11 w-full rounded-2xl bg-[#2EA7E0] px-4 text-white hover:bg-[#1D8FC7]"
+                    className="duo-primary h-11 w-full rounded-2xl px-4 font-semibold"
                   >
                     Save Profile
                   </button>
@@ -1813,10 +2522,8 @@ export default function FlashcardApp() {
                       key={period}
                       onClick={() => setRankingPeriod(period)}
                       className={cn(
-                        'rounded-xl border px-3 py-2 text-sm font-medium',
-                        rankingPeriod === period
-                          ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                          : 'border-[#D9E7F0] bg-white text-[#163047]'
+                        'rounded-xl px-3 py-2 text-sm font-semibold',
+                        rankingPeriod === period ? 'duo-chip-active' : 'duo-chip-inactive'
                       )}
                     >
                       {period === 'daily'
@@ -1832,14 +2539,12 @@ export default function FlashcardApp() {
                   Active players: <span className="font-semibold">{playerCount}</span>
                 </div>
 
-                {(sessionUser?.role === 'manager' || sessionUser?.role === 'admin') && (
+                {isManagerUser && (
                   <button
                     onClick={() => setShowManagerDashboard((v) => !v)}
                     className={cn(
-                      'mb-3 flex h-11 w-full items-center justify-center gap-2 rounded-2xl border text-sm font-medium',
-                      showManagerDashboard
-                        ? 'border-[#2EA7E0] bg-[#2EA7E0] text-white'
-                        : 'border-[#D9E7F0] bg-white text-[#163047]'
+                      'mb-3 flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold',
+                      showManagerDashboard ? 'duo-chip-active' : 'duo-chip-inactive'
                     )}
                   >
                     <Shield className="h-4 w-4" />
@@ -1849,7 +2554,7 @@ export default function FlashcardApp() {
 
                 <button
                   onClick={() => void saveTodayScore()}
-                  className="mb-3 h-11 w-full rounded-2xl bg-[#2EA7E0] px-4 font-medium text-white hover:bg-[#1D8FC7]"
+                  className="duo-primary mb-3 h-11 w-full rounded-2xl px-4 font-medium"
                 >
                   Save Today Score
                 </button>
@@ -1895,36 +2600,68 @@ export default function FlashcardApp() {
             </div>
           </CardShell>
 
-          <div className="space-y-4">
+          <div className="order-1 space-y-4 pb-24 xl:order-2 xl:pb-0">
             <div className="mx-auto max-w-4xl rounded-2xl border border-[#D9E7F0] bg-white px-4 py-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm text-[#6B7C8F]">
+              <div className="mb-3 flex flex-col gap-3 text-sm text-[#6B7C8F] sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>{deckLabel}</span>
+                  <span className="rounded-full bg-[#F3FBE8] px-3 py-1 text-[11px] font-semibold text-[#58CC02]">
+                    {mode === 'review' ? 'Rate 1-4' : 'Swipe / Enter'}
+                  </span>
+                </div>
                 <span>
-                  {deckMode === 'smart'
-                    ? 'Smart session'
-                    : deckMode === 'review'
-                    ? 'Review deck'
-                    : deckMode === 'weak'
-                    ? 'Weak deck'
-                    : 'Normal deck'}
-                </span>
-                <span>
-                  Card {Math.min(index + 1, Math.max(smartFilteredCards.length, 1))} /{' '}
-                  {smartFilteredCards.length || 1}
+                  Card {currentCardNumber} / {smartFilteredCards.length || 1}
                 </span>
               </div>
 
-              <div className="h-3 overflow-hidden rounded-full bg-[#D9E7F0]">
+              <div className="mb-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMinimalLearningView((current) => {
+                      const next = !current;
+                      if (next) {
+                        setShowLearningTools(false);
+                      }
+                      return next;
+                    });
+                  }}
+                  className={cn(
+                    'rounded-full px-3 py-2 text-xs font-semibold',
+                    minimalLearningView ? 'duo-chip-active' : 'duo-chip-inactive'
+                  )}
+                >
+                  {minimalLearningView ? 'Minimal View' : 'Expanded View'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowLearningTools((current) => !current)}
+                  className={cn(
+                    'rounded-full px-3 py-2 text-xs font-semibold',
+                    shouldShowLearningTools ? 'duo-chip-active' : 'duo-chip-inactive'
+                  )}
+                >
+                  {shouldShowLearningTools ? 'Hide Tools' : 'Open Tools'}
+                </button>
+              </div>
+
+              <div className="duo-progress-track h-3 overflow-hidden rounded-full">
                 <motion.div
-                  className="h-full rounded-full bg-gradient-to-r from-[#2EA7E0] to-[#1D8FC7]"
+                  className="duo-progress-fill h-full rounded-full"
                   animate={{ width: `${progress}%` }}
                   transition={{ duration: 0.35 }}
                 />
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#6B7C8F]">
-                <span>Session goal {Math.min(sessionCardCount, sessionGoal)} / {sessionGoal}</span>
-                <span>Due {dueReviewIds.length} | Weak {weakWordIds.length} | Smart {smartDeckCount}</span>
-              </div>
+              {!minimalLearningView ? (
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-[#6B7C8F] sm:flex sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
+                  <span>Session goal {Math.min(sessionCardCount, sessionGoal)} / {sessionGoal}</span>
+                  <span className="text-right sm:text-left">
+                    Due {dueReviewIds.length} | Weak {weakWordIds.length} | Smart {smartDeckCount}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
             <AnimatePresence>
@@ -1935,9 +2672,10 @@ export default function FlashcardApp() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0 }}
                   className={cn(
-                    'mx-auto max-w-3xl rounded-2xl border px-4 py-3 text-center font-medium',
+                    'mx-auto rounded-2xl border text-center font-medium',
+                    minimalLearningView ? 'max-w-md px-4 py-2 text-sm' : 'max-w-3xl px-4 py-3',
                     answerResult === 'correct'
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      ? 'border-[#8EDC51] bg-[#F3FBE8] text-[#3E5B1A]'
                       : 'border-rose-200 bg-rose-50 text-rose-700'
                   )}
                 >
@@ -1984,6 +2722,9 @@ export default function FlashcardApp() {
                       showPinyin={showPinyin}
                       showThaiReading={showThaiReading}
                       showSentence={showSentence}
+                      audioMuted={audioMuted}
+                      autoPlayWord={autoPlayWord}
+                      autoPlaySentence={autoPlaySentence}
                       onRate={(cardId, rating) => void handleReviewRate(cardId, rating)}
                       onSpeak={handleSpeak}
                     />
@@ -2044,27 +2785,47 @@ export default function FlashcardApp() {
             </AnimatePresence>
 
             {mode !== 'review' && currentCard ? (
-              <SpeakingPracticePanel
-                card={currentCard}
-                learningMode={learningMode}
-                showSentence={showSentence}
-                showPinyin={showPinyin}
-                showThaiReading={showThaiReading}
-                onSpeak={handleSpeak}
-              />
+              shouldShowLearningTools ? (
+                <SpeakingPracticePanel
+                  card={currentCard}
+                  learningMode={learningMode}
+                  showSentence={showSentence}
+                  showPinyin={showPinyin}
+                  showThaiReading={showThaiReading}
+                  onSpeak={handleSpeak}
+                />
+              ) : (
+                <div className="mx-auto max-w-4xl rounded-2xl border border-[#D8E9C9] bg-white px-4 py-4 text-sm text-[#55677A]">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-semibold text-[#163047]">Focus mode is on</p>
+                      <p className="mt-1 text-xs leading-6 text-[#6B7C8F]">
+                        Speaking practice and helper panels are tucked away to keep the lesson clean.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowLearningTools(true)}
+                      className="duo-secondary rounded-2xl px-4 py-3 text-sm font-semibold"
+                    >
+                      Open Learning Tools
+                    </button>
+                  </div>
+                </div>
+              )
             ) : null}
 
             {mode !== 'review' && (
-              <div className="flex items-center justify-center gap-3">
+              <div className="hidden items-center justify-center gap-3 xl:flex">
                 <button
                   onClick={prevCard}
-                  className="min-w-[160px] rounded-2xl border border-[#D9E7F0] bg-white px-6 py-4 text-lg font-semibold text-[#163047]"
+                  className="duo-secondary min-w-[160px] rounded-2xl px-6 py-4 text-lg font-semibold"
                 >
                   Previous
                 </button>
                 <button
                   onClick={nextCard}
-                  className="min-w-[160px] rounded-2xl bg-[#2EA7E0] px-6 py-4 text-lg font-semibold text-white hover:bg-[#1D8FC7]"
+                  className="duo-primary min-w-[160px] rounded-2xl px-6 py-4 text-lg font-semibold"
                 >
                   Next
                 </button>
@@ -2078,6 +2839,33 @@ export default function FlashcardApp() {
             )}
           </div>
         </div>
+
+        {mode !== 'review' && currentCard ? (
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#D9E7F0] bg-white/95 px-3 py-3 shadow-[0_-12px_40px_rgba(22,48,71,0.12)] backdrop-blur xl:hidden">
+            <div className="mx-auto flex max-w-4xl items-center gap-3 pb-safe">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6B7C8F]">
+                  {deckLabel}
+                </p>
+                <p className="mt-1 text-sm font-semibold text-[#163047]">
+                  Card {currentCardNumber} / {smartFilteredCards.length || 1}
+                </p>
+              </div>
+              <button
+                onClick={prevCard}
+                className="duo-secondary min-w-[92px] rounded-2xl px-4 py-3 text-sm font-semibold"
+              >
+                Previous
+              </button>
+              <button
+                onClick={nextCard}
+                className="duo-primary min-w-[92px] rounded-2xl px-4 py-3 text-sm font-semibold"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="text-center text-sm text-[#6B7C8F]">
           Internal Use Only | Midea Thailand Language Training Platform

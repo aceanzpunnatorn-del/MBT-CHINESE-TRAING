@@ -24,23 +24,23 @@ function EmptyBar({ label }: { label: string }) {
 
 export function AnalyticsPanel({ metrics, loading }: Props) {
   return (
-    <div className="rounded-2xl border border-[#D9E7F0] bg-white p-4">
+    <div className="duo-surface rounded-[28px] p-4">
       <div className="mb-3 flex items-center gap-2">
-        <BarChart3 className="h-4 w-4 text-[#2EA7E0]" />
+        <BarChart3 className="h-4 w-4 text-[#58CC02]" />
         <p className="font-semibold text-[#163047]">Learning Analytics</p>
       </div>
 
       {loading ? (
-        <div className="rounded-xl bg-[#F8FCFE] px-3 py-3 text-sm text-[#6B7C8F]">
+        <div className="rounded-xl bg-[#F8FDEB] px-3 py-3 text-sm text-[#6B7C8F]">
           Loading analytics...
         </div>
       ) : !metrics ? (
-        <div className="rounded-xl bg-[#F8FCFE] px-3 py-3 text-sm text-[#6B7C8F]">
+        <div className="rounded-xl bg-[#F8FDEB] px-3 py-3 text-sm text-[#6B7C8F]">
           Start studying to build your learning analytics.
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <MetricChip icon={<Target className="h-4 w-4" />} label="Accuracy" value={`${metrics.accuracy}%`} />
             <MetricChip icon={<Clock3 className="h-4 w-4" />} label="Study Time" value={`${metrics.dailyStudyMinutes}m`} />
             <MetricChip icon={<Flame className="h-4 w-4" />} label="Streak" value={String(metrics.streak)} />
@@ -49,15 +49,15 @@ export function AnalyticsPanel({ metrics, loading }: Props) {
             <MetricChip icon={<Target className="h-4 w-4" />} label="Answers" value={String(metrics.totalAnswers)} />
           </div>
 
-          <div className="rounded-2xl bg-[#F8FCFE] p-4">
+          <div className="rounded-2xl bg-[#F8FDEB] p-4">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#163047]">
-              <Sparkles className="h-4 w-4 text-[#2EA7E0]" />
+              <Sparkles className="h-4 w-4 text-[#58CC02]" />
               Insight
             </div>
             <p className="text-sm leading-6 text-[#55677A]">{metrics.insight}</p>
           </div>
 
-          <div className="rounded-2xl bg-[#F8FCFE] p-4">
+          <div className="rounded-2xl bg-[#F8FDEB] p-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-semibold text-[#163047]">Accuracy Trend</p>
               <span className="text-xs text-[#6B7C8F]">Last 7-14 reviews</span>
@@ -65,12 +65,12 @@ export function AnalyticsPanel({ metrics, loading }: Props) {
             {metrics.accuracyTrend.length === 0 ? (
               <EmptyBar label="No trend data yet" />
             ) : (
-              <div className="flex h-32 items-end gap-2">
+              <div className="flex h-28 items-end gap-2 sm:h-32">
                 {metrics.accuracyTrend.map((point) => (
                   <div key={point.date} className="flex min-w-0 flex-1 flex-col items-center gap-2">
-                    <div className="flex h-20 w-full items-end">
+                    <div className="flex h-16 w-full items-end sm:h-20">
                       <div
-                        className="w-full rounded-t-lg bg-gradient-to-t from-[#1D8FC7] to-[#5DD4FF]"
+                        className="w-full rounded-t-lg bg-gradient-to-t from-[#58CC02] to-[#9AE65A]"
                         style={{ height: `${Math.max(8, point.accuracy)}%` }}
                       />
                     </div>
@@ -83,7 +83,7 @@ export function AnalyticsPanel({ metrics, loading }: Props) {
             )}
           </div>
 
-          <div className="rounded-2xl bg-[#F8FCFE] p-4">
+          <div className="rounded-2xl bg-[#F8FDEB] p-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-semibold text-[#163047]">Activity</p>
               <span className="text-xs text-[#6B7C8F]">7 day rhythm</span>
@@ -98,9 +98,9 @@ export function AnalyticsPanel({ metrics, loading }: Props) {
                   return (
                     <div key={point.date} className="flex min-w-0 flex-1 flex-col items-center gap-2">
                       <div
-                        className="h-14 w-full rounded-xl border border-[#D9E7F0]"
+                        className="h-12 w-full rounded-xl border border-[#D8E9C9] sm:h-14"
                         style={{
-                          backgroundColor: `rgba(46, 167, 224, ${intensity})`,
+                          backgroundColor: `rgba(88, 204, 2, ${intensity})`,
                         }}
                       />
                       <span className="text-[10px] text-[#6B7C8F]">
@@ -128,9 +128,9 @@ function MetricChip({
   value: string;
 }) {
   return (
-    <div className="rounded-2xl border border-[#D9E7F0] bg-[#F8FCFE] p-3">
-      <div className="flex items-center gap-2 text-[#2EA7E0]">{icon}</div>
-      <div className="mt-2 text-lg font-bold text-[#163047]">{value}</div>
+    <div className="rounded-2xl border border-[#D8E9C9] bg-[#F8FDEB] p-3">
+      <div className="flex items-center gap-2 text-[#58CC02]">{icon}</div>
+      <div className="mt-2 text-base font-bold text-[#163047] sm:text-lg">{value}</div>
       <div className="text-xs text-[#6B7C8F]">{label}</div>
     </div>
   );

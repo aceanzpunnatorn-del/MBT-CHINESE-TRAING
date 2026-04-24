@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowRight,
   Building2,
@@ -12,8 +12,8 @@ import {
   Sparkles,
   User2,
 } from 'lucide-react';
-import { signInOrCreateUser } from '@/lib/users';
-import { saveUserSession } from '@/lib/session';
+
+import { refreshUserSession, saveUserSession } from '@/lib/session';
 
 const DEPARTMENTS = [
   'HR',
@@ -36,6 +36,16 @@ export default function Page() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    void refreshUserSession()
+      .then((verifiedSession) => {
+        if (verifiedSession) {
+          window.location.href = '/learn';
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   const handleSubmit = async () => {
     setError('');
 
@@ -46,20 +56,42 @@ export default function Page() {
 
     setLoading(true);
     try {
-      const user = await signInOrCreateUser({
-        employeeCode: employeeId.trim(),
-        name: name.trim(),
-        department: department.trim(),
+      const response = await fetch('/api/session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          employeeCode: employeeId.trim(),
+          name: name.trim(),
+          department: department.trim(),
+        }),
       });
 
+      const payload = (await response.json()) as {
+        user?: {
+          id: string;
+          employee_code: string;
+          name: string;
+          department: string;
+          role?: 'learner' | 'manager' | 'admin';
+          created_at?: string;
+          updated_at?: string;
+          last_login_at?: string | null;
+        };
+        error?: string;
+      };
+
+      if (!response.ok || !payload.user) {
+        throw new Error(payload.error || 'Unable to sign in. Please try again.');
+      }
+
+      const user = payload.user;
       saveUserSession(user);
       window.location.href = '/learn';
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to sign in. Please try again.'
-      );
+      setError(err instanceof Error ? err.message : 'Unable to sign in. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -111,7 +143,7 @@ export default function Page() {
           </div>
 
           <h1 className="mt-4 text-3xl font-bold leading-tight sm:text-4xl">
-            Learn Thai ↔ Chinese for factory work
+            Learn Thai and Chinese for factory work
           </h1>
 
           <p className="mt-3 text-sm leading-6 text-white/[0.75] sm:text-base">
@@ -143,7 +175,7 @@ export default function Page() {
           <div className="relative z-10 p-4 sm:p-5">
             <div className="mb-5 grid grid-cols-3 gap-3">
               {[
-                { label: 'Focus', value: 'TH ↔ ZH' },
+                { label: 'Focus', value: 'TH / ZH' },
                 { label: 'Use', value: 'Factory' },
                 { label: 'Mode', value: 'Daily' },
               ].map((item) => (
@@ -152,18 +184,14 @@ export default function Page() {
                   className="rounded-2xl border border-white/15 bg-white/10 p-3 text-white"
                 >
                   <p className="text-[11px] text-white/[0.65]">{item.label}</p>
-                  <p className="mt-2 text-sm font-semibold sm:text-base">
-                    {item.value}
-                  </p>
+                  <p className="mt-2 text-sm font-semibold sm:text-base">{item.value}</p>
                 </div>
               ))}
             </div>
 
             <div className="space-y-4">
               <div>
-                <label className="mb-2 block text-sm font-medium text-white">
-                  Employee ID
-                </label>
+                <label className="mb-2 block text-sm font-medium text-white">Employee ID</label>
                 <div className="flex h-14 items-center rounded-2xl border border-white/20 bg-white/[0.92] px-4 text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition focus-within:border-sky-300">
                   <IdCard className="mr-3 h-4 w-4 shrink-0 text-slate-500" />
                   <input
@@ -177,9 +205,7 @@ export default function Page() {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-white">
-                  Name
-                </label>
+                <label className="mb-2 block text-sm font-medium text-white">Name</label>
                 <div className="flex h-14 items-center rounded-2xl border border-white/20 bg-white/[0.92] px-4 text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition focus-within:border-sky-300">
                   <User2 className="mr-3 h-4 w-4 shrink-0 text-slate-500" />
                   <input
@@ -193,9 +219,7 @@ export default function Page() {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-white">
-                  Department
-                </label>
+                <label className="mb-2 block text-sm font-medium text-white">Department</label>
                 <div className="flex h-14 items-center rounded-2xl border border-white/20 bg-white/[0.92] px-4 text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition focus-within:border-sky-300">
                   <Building2 className="mr-3 h-4 w-4 shrink-0 text-slate-500" />
                   <select
@@ -213,11 +237,11 @@ export default function Page() {
                 </div>
               </div>
 
-              {error && (
+              {error ? (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50/95 px-4 py-3 text-sm text-rose-600">
                   {error}
                 </div>
-              )}
+              ) : null}
 
               <button
                 type="submit"
